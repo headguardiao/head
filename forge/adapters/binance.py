@@ -37,6 +37,8 @@ class BinanceAdapter(ExchangeAdapter):
         self._books = {s: LocalOrderBook() for s in symbols}
         self._buffers: dict[str, list[dict]] = {s: [] for s in symbols}
         self._synced: dict[str, bool] = {s: False for s in symbols}
+        self._sync_in_flight: dict[str, bool] = {s: False for s in symbols}
+        self._next_sync_attempt: dict[str, float] = {s: 0.0 for s in symbols}
         self._last_u: dict[str, int] = {s: 0 for s in symbols}
         self._http: aiohttp.ClientSession | None = None
 
@@ -69,7 +71,12 @@ class BinanceAdapter(ExchangeAdapter):
             return
         if not self._synced[canonical]:
             self._buffers[canonical].append(data)
-            await self._try_sync(canonical)
+            # Only one REST snapshot fetch may be in flight per symbol —
+            # otherwise every buffered depth event (arriving every ~100ms)
+            # fires its own request and Binance rate-limits/bans us within
+            # seconds, which surfaced as sporadic KeyError crashes here.
+            if not self._sync_in_flight[canonical] and time.time() >= self._next_sync_attempt[canonical]:
+                await self._try_sync(canonical)
             return
         if data["pu"] != self._last_u[canonical]:
             logger.warning(
@@ -78,15 +85,26 @@ class BinanceAdapter(ExchangeAdapter):
             )
             self._synced[canonical] = False
             self._buffers[canonical] = [data]
-            await self._try_sync(canonical)
+            if not self._sync_in_flight[canonical] and time.time() >= self._next_sync_attempt[canonical]:
+                await self._try_sync(canonical)
             return
         await self._apply_update(canonical, data)
 
     async def _try_sync(self, canonical: str) -> None:
         symbol = exchange_symbol(canonical, "binance")
         http = await self._get_http()
-        async with http.get(f"{REST_BASE}/fapi/v1/depth", params={"symbol": symbol, "limit": 1000}) as resp:
-            snap = await resp.json()
+        self._sync_in_flight[canonical] = True
+        try:
+            async with http.get(f"{REST_BASE}/fapi/v1/depth", params={"symbol": symbol, "limit": 1000}) as resp:
+                snap = await resp.json()
+        finally:
+            self._sync_in_flight[canonical] = False
+        if "lastUpdateId" not in snap:
+            # Rate-limited/banned or transient error: back off instead of
+            # retrying on the very next depth message.
+            self._next_sync_attempt[canonical] = time.time() + 5.0
+            logger.warning("[binance] %s depth snapshot request failed: %s", canonical, snap)
+            return
         last_update_id = snap["lastUpdateId"]
         book = self._books[canonical]
         book.apply_snapshot(

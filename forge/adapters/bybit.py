@@ -41,7 +41,13 @@ class BybitAdapter(ExchangeAdapter):
         topics = []
         for s in self.symbols:
             sym = exchange_symbol(s, "bybit")
-            topics += [f"orderbook.50.{sym}", f"publicTrade.{sym}", f"liquidation.{sym}"]
+            # NOTE: Bybit deprecated the per-liquidation "liquidation.<symbol>"
+            # topic in favor of "allLiquidation.<symbol>". Subscribing to the
+            # old name doesn't error - the server silently stops pushing
+            # *any* data (not just liquidations) for the whole connection,
+            # which is why this was found via live testing rather than an
+            # exception in the logs.
+            topics += [f"orderbook.50.{sym}", f"publicTrade.{sym}", f"allLiquidation.{sym}"]
         async with websockets.connect(WS_URL, ping_interval=20, ping_timeout=20) as ws:
             await ws.send(json.dumps({"op": "subscribe", "args": topics}))
             logger.info("[bybit] connected, subscribed %s topics", len(topics))
@@ -52,7 +58,7 @@ class BybitAdapter(ExchangeAdapter):
                     await self._handle_book(msg)
                 elif topic.startswith("publicTrade."):
                     await self._handle_trades(msg)
-                elif topic.startswith("liquidation."):
+                elif topic.startswith("allLiquidation."):
                     await self._handle_liquidation(msg)
 
     async def _handle_book(self, msg: dict) -> None:
@@ -94,19 +100,20 @@ class BybitAdapter(ExchangeAdapter):
             await self._emit_trade(trade)
 
     async def _handle_liquidation(self, msg: dict) -> None:
-        data = msg["data"]
-        canonical = canonical_from_exchange("bybit", data["symbol"])
-        if canonical is None:
-            return
-        liq = Liquidation(
-            exchange=self.name,
-            symbol=canonical,
-            side=Side.BUY if data["side"] == "Buy" else Side.SELL,
-            price=float(data["price"]),
-            qty=float(data["size"]),
-            timestamp=int(data["updatedTime"]) / 1000,
-        )
-        await self._emit_liquidation(liq)
+        # allLiquidation.<symbol> pushes a list of entries: s, S, v, p, T.
+        for entry in msg.get("data", []):
+            canonical = canonical_from_exchange("bybit", entry["s"])
+            if canonical is None:
+                continue
+            liq = Liquidation(
+                exchange=self.name,
+                symbol=canonical,
+                side=Side.BUY if entry["S"] == "Buy" else Side.SELL,
+                price=float(entry["p"]),
+                qty=float(entry["v"]),
+                timestamp=int(entry["T"]) / 1000,
+            )
+            await self._emit_liquidation(liq)
 
     async def _rest_poll_once(self) -> None:
         http = await self._get_http()

@@ -91,3 +91,26 @@ antes de qualquer decisão de mercado real** — em especial:
   seria necessário confirmar o endpoint correto).
 - Cálculo de OI em USD via mid-price local (OKX/Bitget) é uma
   aproximação quando o payload não traz o valor em USD diretamente.
+
+## Validado em teste ao vivo (2026-08-13)
+
+Rodado localmente contra as 4 exchanges reais. Dois bugs só visíveis com
+tráfego real foram encontrados e corrigidos:
+
+- **Binance**: o adapter disparava uma nova chamada REST de snapshot do
+  order book a cada evento de depth (~every 100ms) enquanto não
+  sincronizado, estourando o rate limit e derrubando a conexão em loop.
+  Corrigido com lock de "sync em andamento" + backoff de 5s entre
+  tentativas. Efeito colateral do bug original: a IP de teste tomou ban
+  temporário da Binance (`code -1003`) por algumas horas — o serviço
+  continua funcional (WS de order book/trades não é afetado) e volta a
+  buscar funding/OI automaticamente quando o ban expira.
+- **Bybit**: o tópico `liquidation.<symbol>` está obsoleto — a Bybit
+  renomeou para `allLiquidation.<symbol>` (payload também mudou: lista de
+  entradas com campos `s/S/p/v/T` em vez de um objeto único). Inscrever no
+  tópico antigo não gera erro, mas faz o servidor parar de enviar
+  **qualquer** dado (nem order book, nem trades) na conexão — corrigido.
+
+Depois das correções, Bybit/OKX/Bitget ficaram estáveis (sem reconexões)
+produzindo `liquidity_score`/`bias`/`confidence` coerentes para BTCUSDT e
+ETHUSDT via `GET /signal/{symbol}`.
