@@ -1,0 +1,17 @@
+[Unit]
+Description=Forge Heatmap Multiexchange
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=forge
+WorkingDirectory=/opt/forge-heatmap
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/forge-heatmap/.venv/bin/python -m forge.app
+Restart=always
+RestartSec=5
+LimitNOFILE=65536
+
+[Install]
+WantedBy=multi-user.target
