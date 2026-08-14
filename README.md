@@ -32,14 +32,50 @@ Exchange WS/REST → Adapters (isolados) → Normalizer → LiquidityEngine
 - `forge/app.py`: liga tudo e expõe uma API HTTP (`GET /signal/{symbol}`)
   para que o bot (mesmo se não for Python — ex.: um EA em MQL5) consiga
   consumir o sinal via requisição HTTP simples.
+- `forge/accounts/`: primeiro passo do roadmap do FinanceX FORGE
+  (`FinanceX_FORGE_Master_Technical_Blueprint.pdf`, etapa "02 Exchange
+  Integration") — conexões privadas por usuário (API key/secret) para
+  ler saldo, posições e ordens abertas em Binance/Bybit/Bitget/OKX. Um
+  `PrivateExchangeClient` por exchange (mesmo princípio de isolamento dos
+  adapters públicos), segredos cifrados em repouso (SQLite +
+  `cryptography.Fernet`) e nunca devolvidos nas respostas da API. Não
+  implementa nenhum endpoint de trading ou saque — apenas leitura.
+- `forge/strategies/`: seleção de estratégia por usuário — escrever a
+  própria (texto livre) ou ativar um template FinanceX (Normal/Elite).
+  Só uma estratégia fica `ACTIVE` por vez; ativar uma nova arquiva a
+  anterior. Sem Strategy DSL/backtest ainda (blueprint seção 15-18) — a
+  IA não estrutura a descrição livre em regras mensuráveis nesta versão.
+- `forge/ledger/`: Trading Ledger normalizado (blueprint seção 9-10).
+  `POST /accounts/connections/{id}/sync-trades` busca os fills/execuções
+  mais recentes da exchange (via os mesmos `PrivateExchangeClient` de
+  `forge/accounts/`, agora com `get_recent_trades()`), grava como `Trade`
+  (dedup por `(exchange, external_id)`, então repetir a sincronização é
+  seguro) e vincula cada trade novo à estratégia `ACTIVE` do usuário, se
+  houver. Sem histórico completo/paginação ainda — só a janela recente
+  que cada exchange devolve por padrão (3 dias na OKX, por exemplo).
+  `classification` fica sempre `UNKNOWN`: o Adherence Engine que avaliaria
+  aderência de verdade (blueprint seção 20) não existe nesta versão. Motor
+  de insight comportamental, jobs agendados e o chat de perguntas
+  sugestivas (`FORGE Modulo Comportamental e Estrategia Spec.pdf`) ficam
+  para uma próxima rodada — dependem de dados reais fluindo por aqui
+  primeiro.
 
 ## Segurança
 
-Todo o pipeline usa **apenas dados públicos de mercado** — nenhuma API key
-é necessária para order book, trades, OI, funding ou liquidações. Não há
-nenhuma chave de exchange neste repositório. Quando (e se) módulos de
-execução forem adicionados, as chaves privadas devem ficar em um secret
-manager separado deste módulo de análise, nunca no código.
+Todo o pipeline de mercado usa **apenas dados públicos** — nenhuma API key
+é necessária para order book, trades, OI, funding ou liquidações.
+
+`forge/accounts/` (conexões privadas) é diferente: guarda API key/secret
+do usuário cifrados com `Fernet` (chave em `FORGE_ENCRYPTION_KEY`, nunca
+no repositório — veja `.env.example`). Nenhuma chave/secret é devolvida
+por qualquer endpoint. **Este módulo ainda não tem autenticação real**
+— os endpoints `/accounts/*` identificam o "usuário" por um `user_id` de
+texto livre no request, sem verificação nenhuma (a etapa "01 Foundation"
+do blueprint, que cobre login/auth de verdade, foi propositalmente
+pulada). Isso é aceitável só para desenvolvimento local; **não exponha a
+porta 8080 publicamente enquanto isso não mudar** — a mesma recomendação
+de firewall abaixo vale em dobro aqui, já que agora há segredos reais em
+jogo, não só dados públicos de mercado.
 
 ## Rodar localmente
 
@@ -49,8 +85,13 @@ Requer Python 3.10+.
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+cp .env.example .env    # e preencha FORGE_ENCRYPTION_KEY (veja o arquivo)
 python -m forge.app
 ```
+
+`FORGE_ENCRYPTION_KEY` só é obrigatória para usar `/accounts/*` (criar ou
+ler conexões de exchange privadas) — o heatmap público (`/signal/{symbol}`)
+funciona sem ela.
 
 Depois:
 

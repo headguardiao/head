@@ -2,11 +2,16 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import pathlib
 import sys
 
 from aiohttp import web
 
-from config.settings import HTTP_HOST, HTTP_PORT, MIN_EXCHANGES_FOR_FULL_CONFIDENCE, SYMBOLS
+from config.settings import DB_PATH, HTTP_HOST, HTTP_PORT, MIN_EXCHANGES_FOR_FULL_CONFIDENCE, SYMBOLS
+from forge.accounts.api import register_routes as register_accounts_routes
+from forge.accounts.db import ConnectionsRepo
+from forge.accounts.db import init_db as init_accounts_db
+from forge.accounts.service import AccountsService
 from forge.adapters.base import ExchangeAdapter
 from forge.adapters.binance import BinanceAdapter
 from forge.adapters.bitget import BitgetAdapter
@@ -14,12 +19,22 @@ from forge.adapters.bybit import BybitAdapter
 from forge.adapters.okx import OKXAdapter
 from forge.engine.score_engine import SymbolMarketState
 from forge.interface import Heatmap
+from forge.ledger.api import register_routes as register_ledger_routes
+from forge.ledger.db import StrategyTradesRepo, TradesRepo
+from forge.ledger.db import init_db as init_ledger_db
+from forge.ledger.service import LedgerService
+from forge.strategies.api import register_routes as register_strategies_routes
+from forge.strategies.db import StrategiesRepo
+from forge.strategies.db import init_db as init_strategies_db
+from forge.strategies.service import StrategyService
 
 logging.basicConfig(
     level=logging.INFO,
     format="%(asctime)s %(levelname)s %(name)s: %(message)s",
 )
 logger = logging.getLogger("forge.app")
+
+STATIC_DIR = pathlib.Path(__file__).parent / "static"
 
 
 def build_adapters(symbols: list[str]) -> list[ExchangeAdapter]:
@@ -64,7 +79,12 @@ def _wire_adapter(adapter: ExchangeAdapter, states: dict[str, SymbolMarketState]
     adapter.on_liquidation = on_liquidation
 
 
-async def _start_http_server(heatmap: Heatmap) -> web.AppRunner:
+async def _start_http_server(
+    heatmap: Heatmap,
+    accounts_service: AccountsService,
+    strategy_service: StrategyService,
+    ledger_service: LedgerService,
+) -> web.AppRunner:
     async def get_signal(request: web.Request) -> web.Response:
         symbol = request.match_info["symbol"].upper()
         try:
@@ -75,9 +95,17 @@ async def _start_http_server(heatmap: Heatmap) -> web.AppRunner:
     async def health(_request: web.Request) -> web.Response:
         return web.json_response({"status": "ok"})
 
+    async def dashboard(_request: web.Request) -> web.Response:
+        return web.FileResponse(STATIC_DIR / "dashboard.html")
+
     web_app = web.Application()
     web_app.router.add_get("/signal/{symbol}", get_signal)
     web_app.router.add_get("/health", health)
+    web_app.router.add_get("/dashboard", dashboard)
+    web_app.router.add_get("/", dashboard)
+    register_accounts_routes(web_app, accounts_service)
+    register_strategies_routes(web_app, strategy_service)
+    register_ledger_routes(web_app, ledger_service)
 
     runner = web.AppRunner(web_app)
     await runner.setup()
@@ -88,13 +116,23 @@ async def _start_http_server(heatmap: Heatmap) -> web.AppRunner:
 
 
 async def main() -> None:
+    await init_accounts_db(DB_PATH)
+    await init_strategies_db(DB_PATH)
+    await init_ledger_db(DB_PATH)
+
+    accounts_service = AccountsService(ConnectionsRepo(DB_PATH))
+    strategy_service = StrategyService(StrategiesRepo(DB_PATH))
+    ledger_service = LedgerService(
+        accounts_service, TradesRepo(DB_PATH), StrategyTradesRepo(DB_PATH), StrategiesRepo(DB_PATH)
+    )
+
     states = {s: SymbolMarketState(s, MIN_EXCHANGES_FOR_FULL_CONFIDENCE) for s in SYMBOLS}
     heatmap = Heatmap(states)
     adapters = build_adapters(SYMBOLS)
     for adapter in adapters:
         _wire_adapter(adapter, states)
 
-    runner = await _start_http_server(heatmap)
+    runner = await _start_http_server(heatmap, accounts_service, strategy_service, ledger_service)
     try:
         await asyncio.gather(*(a.run_forever() for a in adapters))
     finally:
