@@ -119,7 +119,7 @@
   .note { font-size: 0.78rem; color: var(--ink-muted); line-height: 1.4; }
 
   .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
-  .metric { display: flex; flex-direction: column; gap: 6px; }
+  .metric { display: flex; flex-direction: column; gap: 6px; cursor: help; }
   .metric .label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-muted); }
   .metric .val { font-family: var(--mono); font-size: 1.1rem; font-variant-numeric: tabular-nums; }
   .bar-track { height: 6px; border-radius: 999px; background: var(--gridline); overflow: hidden; }
@@ -298,20 +298,21 @@
     const grid = el('componentsGrid');
     grid.innerHTML = '';
     const labels = {
-      concentrationScore: 'Concentração',
-      removalScore: 'Remoção de liquidez',
-      oiScore: 'Open interest',
-      liquidationScore: 'Liquidações',
-      imbalanceScore: 'Imbalance',
-      cvdScore: 'CVD (fluxo)',
-      fundingScore: 'Funding',
-      confirmationScore: 'Confirmação',
+      concentrationScore: ['Concentração (25%)', 'Compara a liquidez de venda acima do preço com a de compra abaixo. Muito desequilibrado = parede de resistência ou suporte forte. Define o bias (BEARISH/BULLISH).'],
+      removalScore: ['Remoção de liquidez (15%)', 'Quanto da liquidez que existia 60s atrás já não está mais no book agora. Alto = ordens grandes foram puxadas/canceladas recentemente.'],
+      oiScore: ['Open interest (15%)', 'Variação % do total de contratos em aberto (somado nas exchanges) nos últimos 15min. Sobe forte = mais gente abrindo posição.'],
+      liquidationScore: ['Liquidações (15%)', 'Notional em USD de ordens forçadas (liquidadas) nos últimos 15min. Alto = mercado violento, posições alavancadas estourando.'],
+      imbalanceScore: ['Imbalance (10%)', 'Compara compra vs venda nos 10 primeiros níveis do book agora. Positivo = mais pressão compradora perto do preço.'],
+      cvdScore: ['CVD / fluxo de trades (10%)', 'Olha os trades já executados (não o book): comprador batendo no ask vs vendedor batendo no bid, numa janela recente.'],
+      fundingScore: ['Funding (5%)', 'Taxa de funding média entre as exchanges. Positiva e alta = mercado muito otimista (longs pagando shorts).'],
+      confirmationScore: ['Confirmação entre exchanges (5%)', 'Quantas das 4 exchanges estão conectadas e contribuindo dados agora (conectadas / 4 × 100).'],
     };
-    for (const [key, label] of Object.entries(labels)) {
+    for (const [key, [label, desc]] of Object.entries(labels)) {
       const v = comps[key];
       if (v == null) continue;
       const m = document.createElement('div');
       m.className = 'metric';
+      m.title = desc;
       m.innerHTML = `
         <span class="label">${label}</span>
         <span class="val">${v.toFixed(1)}</span>
