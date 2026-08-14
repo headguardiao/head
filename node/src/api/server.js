@@ -6,9 +6,13 @@ import { env } from '../config/env.js';
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 
-function countSynced(diagnostics) {
-  const symbols = Object.values(diagnostics);
-  return { synced: symbols.filter((d) => d.synced).length, total: symbols.length };
+function summarizeDiagnostics(diagnostics) {
+  const symbols = Object.values(diagnostics.symbols);
+  return {
+    synced: symbols.filter((d) => d.synced).length,
+    total: symbols.length,
+    lastError: diagnostics.lastError,
+  };
 }
 
 export function createServer({ marketStates, adapters, startedAt }) {
@@ -34,7 +38,7 @@ export function createServer({ marketStates, adapters, startedAt }) {
         lastMessageAgeMs: adapter.lastMessageAt ? Date.now() - adapter.lastMessageAt : null,
         // Binance needs a REST snapshot per symbol before it contributes
         // to the aggregated book - "connected" alone doesn't mean synced.
-        ...(adapter.diagnostics ? { syncedSymbols: countSynced(adapter.diagnostics()) } : {}),
+        ...(adapter.diagnostics ? { syncedSymbols: summarizeDiagnostics(adapter.diagnostics()) } : {}),
       };
     }
     res.json({

@@ -29,6 +29,17 @@ const SYNC_BACKOFF_MAX_MS = 60_000;
 // concurrent in-flight snapshot fetches spreads that burst out over a few
 // seconds as slots free up instead of hitting Binance all at once.
 const MAX_CONCURRENT_SYNCS = 4;
+// The concurrency cap alone still lets requests fire back-to-back as
+// slots free up (4 fast 429s can complete in well under a second), which
+// at 90+ symbols burns through Binance's request-weight budget in
+// seconds and re-triggers the exact IP-level throttle/ban this is meant
+// to avoid - observed live: every symbol's sync stuck failing minutes
+// after connecting, not just slow to catch up. A minimum gap between the
+// *start* of successive REST calls (independent of concurrency) caps the
+// aggregate rate directly: 1 req/s * weight 20 = 1200/min, half of
+// Binance's 2400/min budget, leaving headroom for retries and (later)
+// funding/OI polling.
+const MIN_SYNC_INTERVAL_MS = 1000;
 // Bounded so an extended throttle/outage can't grow this without limit -
 // ~50s of buffered depth events at the ~100ms stream cadence, comfortably
 // more than any realistic REST round trip once synced.
@@ -45,20 +56,25 @@ export class BinanceAdapter extends ExchangeAdapter {
     this.syncFailureCount = new Map(symbols.map((s) => [s, 0]));
     this.lastUpdateId = new Map(symbols.map((s) => [s, 0]));
     this._activeSyncs = 0;
+    this._lastSyncStartedAt = 0;
+    this._lastSyncError = null;
   }
 
   /** Per-symbol sync state, surfaced on /health to diagnose "why is this
    * symbol missing from the aggregated book" without needing log access. */
   diagnostics() {
-    const out = {};
+    const symbols = {};
     for (const s of this.symbols) {
-      out[s] = {
+      symbols[s] = {
         synced: this.synced.get(s) ?? false,
         syncFailureCount: this.syncFailureCount.get(s) ?? 0,
         bufferedEvents: this.buffers.get(s)?.length ?? 0,
       };
     }
-    return out;
+    // A single shared error is enough context here: a failing REST snapshot
+    // fetch is almost always an IP-level throttle/ban, which fails every
+    // symbol for the same reason at once rather than symbol-by-symbol.
+    return { symbols, lastError: this._lastSyncError };
   }
 
   getWsUrl() {
@@ -142,6 +158,11 @@ export class BinanceAdapter extends ExchangeAdapter {
   _maybeSync(canonical) {
     if (this.syncInFlight.get(canonical)) return;
     if (Date.now() < this.nextSyncAttemptAt.get(canonical)) return;
+    const sinceLastStart = Date.now() - this._lastSyncStartedAt;
+    if (sinceLastStart < MIN_SYNC_INTERVAL_MS) {
+      this.nextSyncAttemptAt.set(canonical, this._lastSyncStartedAt + MIN_SYNC_INTERVAL_MS);
+      return;
+    }
     if (this._activeSyncs >= MAX_CONCURRENT_SYNCS) {
       // At capacity - retry shortly with jitter so the whole batch doesn't
       // wake up and re-contend for a slot in lockstep.
@@ -149,6 +170,7 @@ export class BinanceAdapter extends ExchangeAdapter {
       return;
     }
     this._activeSyncs += 1;
+    this._lastSyncStartedAt = Date.now();
     this._trySync(canonical)
       .catch((err) => {
         logger.error(`[binance] ${canonical} resync failed: ${err.message}`);
@@ -179,6 +201,7 @@ export class BinanceAdapter extends ExchangeAdapter {
 
     if (!snap.lastUpdateId) {
       this._backoffNextSync(canonical);
+      this._lastSyncError = { canonical, code: snap.code, msg: snap.msg, at: Date.now() };
       logger.warn(
         `[binance] ${canonical} depth snapshot request failed (attempt ${this.syncFailureCount.get(canonical)}): ${JSON.stringify(snap)}`,
       );
