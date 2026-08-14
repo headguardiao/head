@@ -95,6 +95,23 @@
     margin-bottom: 14px;
     font-size: 13px;
   }
+  .insight-card {
+    background: #10131a;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    font-size: 13px;
+  }
+  .insight-card.insufficient_data { border-color: var(--warn); }
+  .insight-category {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .insight-card.insufficient_data .insight-category { color: var(--warn); }
   pre {
     background: #10131a;
     border: 1px solid var(--border);
@@ -226,6 +243,22 @@
     </table>
     <div id="trades-empty" class="empty" style="display:none">Nenhum trade sincronizado ainda. Use "Sincronizar trades" numa conexão acima.</div>
   </div>
+</div>
+
+<div class="panel" style="margin-top:20px">
+  <div style="display:flex; justify-content:space-between; align-items:center">
+    <h2 style="margin:0">Análise Comportamental</h2>
+    <button id="generate-insights-btn" class="btn-primary">Gerar análise agora</button>
+  </div>
+  <p class="muted" style="font-size:12px; margin-top:8px">
+    Calculado sob demanda a partir dos trades já sincronizados (sem jobs
+    automáticos ainda). Precisa de pelo menos 15 trades numa categoria
+    para gerar um insight de verdade — com poucos trades, o resultado vai
+    dizer claramente que os dados ainda são insuficientes, em vez de
+    inventar um padrão.
+  </p>
+  <div id="insights-list" style="margin-top:12px"></div>
+  <div id="insights-empty" class="empty" style="display:none">Nenhuma análise gerada ainda para este user_id.</div>
 </div>
 
 <script>
@@ -438,6 +471,57 @@ async function loadTrades() {
   }
 }
 
+function renderInsights(insights) {
+  const list = $('insights-list');
+  const empty = $('insights-empty');
+  list.innerHTML = '';
+  empty.style.display = insights.length ? 'none' : 'block';
+  for (const i of insights) {
+    const card = document.createElement('div');
+    card.className = `insight-card ${i.category}`;
+    const when = new Date(i.generated_at * 1000).toLocaleString();
+    card.innerHTML = `
+      <div class="insight-category">${i.category.replace(/_/g, ' ')}</div>
+      <div style="margin-top:4px">${i.text}</div>
+      <div class="muted" style="font-size:11px; margin-top:4px">amostra: ${i.sample_size} · gerado em ${when}</div>
+    `;
+    list.appendChild(card);
+  }
+}
+
+async function loadInsights() {
+  const userId = currentUserId();
+  if (!userId) {
+    renderInsights([]);
+    return;
+  }
+  const res = await fetch(`/insights?user_id=${encodeURIComponent(userId)}`);
+  renderInsights(await res.json());
+}
+
+$('generate-insights-btn').addEventListener('click', async () => {
+  const userId = currentUserId();
+  if (!userId) {
+    alert('Informe um user_id no painel de contexto primeiro.');
+    return;
+  }
+  const btn = $('generate-insights-btn');
+  btn.disabled = true;
+  btn.textContent = 'Gerando...';
+  try {
+    const res = await fetch(`/insights/generate?user_id=${encodeURIComponent(userId)}`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      alert(data.error || 'Erro ao gerar análise.');
+      return;
+    }
+    await loadInsights();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Gerar análise agora';
+  }
+});
+
 $('connection-form').addEventListener('submit', async (e) => {
   e.preventDefault();
   const status = $('create-status');
@@ -488,12 +572,14 @@ userIdInput.addEventListener('change', () => {
   loadConnections();
   loadActiveStrategy();
   loadTrades();
+  loadInsights();
 });
 
 checkHealth();
 loadConnections();
 loadActiveStrategy();
 loadTrades();
+loadInsights();
 </script>
 </body>
 </html>

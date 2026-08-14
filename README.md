@@ -10,6 +10,10 @@ Fases 5 (Gate.io, KuCoin, MEXC, BingX, BitMart, HTX, CoinEx) e 6
 (backtest/validação antes de permitir que o score altere entradas/saídas
 automaticamente) ainda não estão implementadas.
 
+Pra integrar outro app com esse backend via HTTP (conexões, estratégia,
+trades, insights), veja [`API.md`](API.md) — lista todos os endpoints com
+exemplos de request/resposta.
+
 ## Arquitetura
 
 ```
@@ -54,11 +58,20 @@ Exchange WS/REST → Adapters (isolados) → Normalizer → LiquidityEngine
   houver. Sem histórico completo/paginação ainda — só a janela recente
   que cada exchange devolve por padrão (3 dias na OKX, por exemplo).
   `classification` fica sempre `UNKNOWN`: o Adherence Engine que avaliaria
-  aderência de verdade (blueprint seção 20) não existe nesta versão. Motor
-  de insight comportamental, jobs agendados e o chat de perguntas
-  sugestivas (`FORGE Modulo Comportamental e Estrategia Spec.pdf`) ficam
-  para uma próxima rodada — dependem de dados reais fluindo por aqui
-  primeiro.
+  aderência de verdade (blueprint seção 20) não existe nesta versão.
+- `forge/insights/`: motor de análise comportamental sob demanda
+  (`FORGE Modulo Comportamental e Estrategia Spec.pdf`, seção 2).
+  `POST /insights/generate?user_id=` calcula, na hora, a partir dos
+  trades já sincronizados: performance por origem de estratégia
+  (`strategy_trades.origin`) e consistência por horário do dia (UTC).
+  Exige no mínimo 15 trades por categoria — abaixo disso, devolve
+  explicitamente "dados insuficientes" em vez de inventar um padrão
+  (mesma regra da seção 2.5 do spec / seção 46 do blueprint). Frases são
+  geradas por template, não por IA — sem chave da Anthropic configurada
+  ainda. Sem jobs automáticos (diário/semanal/mensal) nem a aba de
+  Perguntas Sugestivas — ambos exigem infraestrutura que este app ainda
+  não tem (agendador, integração com Claude API) e ficam para uma
+  próxima rodada.
 
 ## Segurança
 
@@ -76,6 +89,15 @@ pulada). Isso é aceitável só para desenvolvimento local; **não exponha a
 porta 8080 publicamente enquanto isso não mudar** — a mesma recomendação
 de firewall abaixo vale em dobro aqui, já que agora há segredos reais em
 jogo, não só dados públicos de mercado.
+
+## Rodar o dashboard rapidamente (Windows)
+
+Depois de fazer o setup uma vez (seção abaixo), dê duplo-clique em
+`run_dashboard.bat` — ele sobe o servidor e abre
+`http://localhost:8080/dashboard` sozinho, carregando `FORGE_DB_PATH` e
+`FORGE_ENCRYPTION_KEY` do `.env`. Feche a janela do terminal que abre
+junto para parar o servidor. O `.env` guarda sua chave de criptografia
+real — nunca o compartilhe nem o commite (já está no `.gitignore`).
 
 ## Rodar localmente
 

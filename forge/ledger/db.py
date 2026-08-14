@@ -164,3 +164,26 @@ class StrategyTradesRepo:
             origin=row["origin"],
             classification=row["classification"],
         )
+
+    async def map_for_trade_ids(self, trade_ids: list[str]) -> dict[str, StrategyTrade]:
+        """Bulk lookup for forge/insights/service.py, which otherwise
+        would need one get_for_trade() call per trade."""
+        if not trade_ids:
+            return {}
+        placeholders = ",".join("?" for _ in trade_ids)
+        async with aiosqlite.connect(self._db_path) as db:
+            db.row_factory = aiosqlite.Row
+            async with db.execute(
+                f"SELECT * FROM strategy_trades WHERE trade_id IN ({placeholders})", trade_ids
+            ) as cursor:
+                rows = await cursor.fetchall()
+        return {
+            row["trade_id"]: StrategyTrade(
+                strategy_trade_id=row["strategy_trade_id"],
+                trade_id=row["trade_id"],
+                strategy_id=row["strategy_id"],
+                origin=row["origin"],
+                classification=row["classification"],
+            )
+            for row in rows
+        }

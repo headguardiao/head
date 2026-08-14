@@ -18,6 +18,10 @@ from forge.adapters.bitget import BitgetAdapter
 from forge.adapters.bybit import BybitAdapter
 from forge.adapters.okx import OKXAdapter
 from forge.engine.score_engine import SymbolMarketState
+from forge.insights.api import register_routes as register_insights_routes
+from forge.insights.db import InsightsRepo
+from forge.insights.db import init_db as init_insights_db
+from forge.insights.service import InsightsService
 from forge.interface import Heatmap
 from forge.ledger.api import register_routes as register_ledger_routes
 from forge.ledger.db import StrategyTradesRepo, TradesRepo
@@ -84,6 +88,7 @@ async def _start_http_server(
     accounts_service: AccountsService,
     strategy_service: StrategyService,
     ledger_service: LedgerService,
+    insights_service: InsightsService,
 ) -> web.AppRunner:
     async def get_signal(request: web.Request) -> web.Response:
         symbol = request.match_info["symbol"].upper()
@@ -106,6 +111,7 @@ async def _start_http_server(
     register_accounts_routes(web_app, accounts_service)
     register_strategies_routes(web_app, strategy_service)
     register_ledger_routes(web_app, ledger_service)
+    register_insights_routes(web_app, insights_service)
 
     runner = web.AppRunner(web_app)
     await runner.setup()
@@ -119,12 +125,15 @@ async def main() -> None:
     await init_accounts_db(DB_PATH)
     await init_strategies_db(DB_PATH)
     await init_ledger_db(DB_PATH)
+    await init_insights_db(DB_PATH)
+
+    trades_repo = TradesRepo(DB_PATH)
+    strategy_trades_repo = StrategyTradesRepo(DB_PATH)
 
     accounts_service = AccountsService(ConnectionsRepo(DB_PATH))
     strategy_service = StrategyService(StrategiesRepo(DB_PATH))
-    ledger_service = LedgerService(
-        accounts_service, TradesRepo(DB_PATH), StrategyTradesRepo(DB_PATH), StrategiesRepo(DB_PATH)
-    )
+    ledger_service = LedgerService(accounts_service, trades_repo, strategy_trades_repo, StrategiesRepo(DB_PATH))
+    insights_service = InsightsService(InsightsRepo(DB_PATH), trades_repo, strategy_trades_repo)
 
     states = {s: SymbolMarketState(s, MIN_EXCHANGES_FOR_FULL_CONFIDENCE) for s in SYMBOLS}
     heatmap = Heatmap(states)
@@ -132,7 +141,7 @@ async def main() -> None:
     for adapter in adapters:
         _wire_adapter(adapter, states)
 
-    runner = await _start_http_server(heatmap, accounts_service, strategy_service, ledger_service)
+    runner = await _start_http_server(heatmap, accounts_service, strategy_service, ledger_service, insights_service)
     try:
         await asyncio.gather(*(a.run_forever() for a in adapters))
     finally:
