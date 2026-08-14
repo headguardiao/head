@@ -60,6 +60,19 @@ function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+// Binance's -1003 ban message embeds the exact unban timestamp, e.g.
+// "IP(1.2.3.4) banned until 1699999999999. Please use the websocket for
+// live updates to avoid bans." Extracted so callers can stop hitting the
+// REST API entirely until it passes, instead of retrying every few
+// seconds - observed live: repeated attempts *while already banned* grew
+// the ban further on redeploy/restart (2h51m remaining became 2h56m
+// remaining), so continuing to retry during an active ban is actively
+// counterproductive, not just wasted.
+function parseBanUntil(msg) {
+  const match = /banned until (\d+)/.exec(msg ?? '');
+  return match ? Number(match[1]) : null;
+}
+
 export class BinanceAdapter extends ExchangeAdapter {
   constructor({ symbols }) {
     super({ name: 'binance', symbols });
@@ -74,6 +87,9 @@ export class BinanceAdapter extends ExchangeAdapter {
     this._lastSyncStartedAt = 0;
     this._lastSyncError = null;
     this.restPollIntervalMs = REST_POLL_INTERVAL_MS;
+    // Set once a -1003 ban response is seen; every REST call (sync AND
+    // OI/funding polling) is suppressed entirely until this passes.
+    this._bannedUntil = 0;
   }
 
   /** Per-symbol sync state, surfaced on /health to diagnose "why is this
@@ -90,7 +106,11 @@ export class BinanceAdapter extends ExchangeAdapter {
     // A single shared error is enough context here: a failing REST snapshot
     // fetch is almost always an IP-level throttle/ban, which fails every
     // symbol for the same reason at once rather than symbol-by-symbol.
-    return { symbols, lastError: this._lastSyncError };
+    return {
+      symbols,
+      lastError: this._lastSyncError,
+      bannedUntil: this._bannedUntil > Date.now() ? this._bannedUntil : null,
+    };
   }
 
   getWsUrl() {
@@ -196,6 +216,10 @@ export class BinanceAdapter extends ExchangeAdapter {
   _maybeSync(canonical) {
     if (this.syncInFlight.get(canonical)) return;
     if (Date.now() < this.nextSyncAttemptAt.get(canonical)) return;
+    if (Date.now() < this._bannedUntil) {
+      this.nextSyncAttemptAt.set(canonical, this._bannedUntil + 1000);
+      return;
+    }
     const sinceLastStart = Date.now() - this._lastSyncStartedAt;
     if (sinceLastStart < MIN_SYNC_INTERVAL_MS) {
       this.nextSyncAttemptAt.set(canonical, this._lastSyncStartedAt + MIN_SYNC_INTERVAL_MS);
@@ -240,6 +264,8 @@ export class BinanceAdapter extends ExchangeAdapter {
     if (!snap.lastUpdateId) {
       this._backoffNextSync(canonical);
       this._lastSyncError = { canonical, code: snap.code, msg: snap.msg, at: Date.now() };
+      const banUntil = parseBanUntil(snap.msg);
+      if (banUntil) this._bannedUntil = Math.max(this._bannedUntil, banUntil);
       logger.warn(
         `[binance] ${canonical} depth snapshot request failed (attempt ${this.syncFailureCount.get(canonical)}): ${JSON.stringify(snap)}`,
       );
@@ -306,11 +332,15 @@ export class BinanceAdapter extends ExchangeAdapter {
   }
 
   async restPollOnce() {
+    if (Date.now() < this._bannedUntil) return;
+
     // premiumIndex without a symbol returns funding rate + mark price for
     // every symbol in one request - far cheaper than 94 individual calls.
     const resp = await fetch(`${REST_BASE}/fapi/v1/premiumIndex`);
     const rows = await resp.json();
     if (!Array.isArray(rows)) {
+      const banUntil = parseBanUntil(rows?.msg);
+      if (banUntil) this._bannedUntil = Math.max(this._bannedUntil, banUntil);
       logger.warn(`[binance] premiumIndex poll failed: ${JSON.stringify(rows)}`);
       return;
     }
@@ -338,10 +368,13 @@ export class BinanceAdapter extends ExchangeAdapter {
     // Open interest has no bulk endpoint - poll per symbol, spaced out to
     // avoid another rate-limit burst like the depth-snapshot one.
     for (const canonical of this.symbols) {
+      if (Date.now() < this._bannedUntil) break;
       const symbol = exchangeSymbol(canonical, 'binance');
       try {
         const oiResp = await fetch(`${REST_BASE}/fapi/v1/openInterest?symbol=${symbol}`);
         const oiData = await oiResp.json();
+        const banUntil = parseBanUntil(oiData?.msg);
+        if (banUntil) this._bannedUntil = Math.max(this._bannedUntil, banUntil);
         const markPrice = markPriceBySymbol.get(canonical);
         if (!oiData.openInterest || !markPrice) continue;
         const event = {

@@ -12,6 +12,7 @@ function summarizeDiagnostics(diagnostics) {
     synced: symbols.filter((d) => d.synced).length,
     total: symbols.length,
     lastError: diagnostics.lastError,
+    bannedUntil: diagnostics.bannedUntil,
   };
 }
 
