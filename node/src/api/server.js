@@ -4,6 +4,14 @@ import { logger } from '../config/logger.js';
 export function createServer({ marketStates, adapters, startedAt }) {
   const app = express();
 
+  // Read-only public market data, no auth/cookies involved - safe to allow
+  // any origin so a browser-based dashboard can poll this API directly.
+  app.use((_req, res, next) => {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'GET');
+    next();
+  });
+
   app.get('/health', (_req, res) => {
     const exchanges = {};
     for (const adapter of adapters) {
