@@ -1,5 +1,7 @@
+import { trackedSymbols } from '../normalizer/symbols.js';
+
 function parseSymbols(raw) {
-  if (!raw) return ['BTCUSDT', 'ETHUSDT'];
+  if (!raw) return trackedSymbols();
   return raw
     .split(',')
     .map((s) => s.trim().toUpperCase())

@@ -48,7 +48,7 @@ book, e as respostas de `/health` e `/api/market/:symbol`.
 | Variável | Padrão | Descrição |
 |---|---|---|
 | `PORT` | `3000` | Porta do servidor HTTP |
-| `SYMBOLS` | `BTCUSDT,ETHUSDT` | Símbolos rastreados, separados por vírgula |
+| `SYMBOLS` | todos os 94 símbolos de `src/normalizer/symbols.js` | Lista separada por vírgula pra rastrear só um subconjunto |
 | `REGION` | `default` | Rótulo informativo, não afeta roteamento ainda |
 | `ORDER_BOOK_DEPTH` | `50` | Níveis de bid/ask mantidos por símbolo/exchange |
 | `MAX_TRADES_PER_SYMBOL` | `2000` | Cap do buffer de trades recentes por símbolo |

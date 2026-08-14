@@ -1,12 +1,22 @@
 import { ExchangeAdapter } from '../base/ExchangeAdapter.js';
 import { LocalOrderBook } from '../../engine/localOrderBook.js';
-import { canonicalFromExchange, exchangeSymbol } from '../../normalizer/symbols.js';
+import { canonicalFromExchange, exchangeSymbol, okxContractValue } from '../../normalizer/symbols.js';
 import { notionalUsd } from '../../normalizer/notional.js';
 import { validateOrderBookEvent, validateTradeEvent } from '../../normalizer/validate.js';
 import { env } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
 
 const WS_URL = 'wss://ws.okx.com:8443/ws/v5/public';
+// OKX's docs cap a single subscribe message's arg list well under its
+// message-size limit; chunking keeps each `subscribe` op small regardless
+// of how many symbols this adapter tracks.
+const SUBSCRIBE_CHUNK_SIZE = 40;
+
+function chunk(arr, size) {
+  const out = [];
+  for (let i = 0; i < arr.length; i += size) out.push(arr.slice(i, i + size));
+  return out;
+}
 
 export class OKXAdapter extends ExchangeAdapter {
   constructor({ symbols }) {
@@ -26,7 +36,7 @@ export class OKXAdapter extends ExchangeAdapter {
         { channel: 'trades', instId },
       ];
     });
-    return [{ op: 'subscribe', args }];
+    return chunk(args, SUBSCRIBE_CHUNK_SIZE).map((batch) => ({ op: 'subscribe', args: batch }));
   }
 
   // OKX's public gateway expects an application-level text "ping", not a
@@ -47,10 +57,15 @@ export class OKXAdapter extends ExchangeAdapter {
   _handleBook(instId, msg) {
     const canonical = canonicalFromExchange('okx', instId);
     if (!canonical) return;
+    const ctVal = okxContractValue(canonical);
     const book = this.books.get(canonical);
     for (const entry of msg.data ?? []) {
-      const bids = entry.bids.map(([p, q]) => [Number(p), Number(q)]);
-      const asks = entry.asks.map(([p, q]) => [Number(p), Number(q)]);
+      // OKX quotes size in contracts, not base-asset units - convert here
+      // so every downstream consumer (LocalOrderBook, LiquidityEngine,
+      // notionalUsd) can treat quantity as coin-denominated uniformly
+      // across exchanges. See okxContractValue() for why this matters.
+      const bids = entry.bids.map(([p, q]) => [Number(p), Number(q) * ctVal]);
+      const asks = entry.asks.map(([p, q]) => [Number(p), Number(q) * ctVal]);
       if (msg.action === 'snapshot') book.applySnapshot(bids, asks);
       else book.applyDelta(bids, asks);
 
@@ -76,9 +91,10 @@ export class OKXAdapter extends ExchangeAdapter {
   _handleTrades(instId, msg) {
     const canonical = canonicalFromExchange('okx', instId);
     if (!canonical) return;
+    const ctVal = okxContractValue(canonical);
     for (const t of msg.data ?? []) {
       const price = Number(t.px);
-      const quantity = Number(t.sz);
+      const quantity = Number(t.sz) * ctVal;
       const event = {
         eventType: 'trade',
         exchange: this.name,

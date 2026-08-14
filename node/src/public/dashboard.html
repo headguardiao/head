@@ -168,10 +168,7 @@
       <p>Score de liquidez multiexchange &mdash; dados públicos, tempo real</p>
     </div>
     <div class="hdr-right">
-      <select id="symbolSelect">
-        <option value="BTCUSDT">BTCUSDT</option>
-        <option value="ETHUSDT">ETHUSDT</option>
-      </select>
+      <select id="symbolSelect"><option value="BTCUSDT">BTCUSDT</option></select>
     </div>
   </div>
 
@@ -386,7 +383,21 @@
     tick();
   });
 
-  tick();
+  async function loadSymbols() {
+    try {
+      const data = await fetchJson('/api/symbols', 8000);
+      const list = (data.symbols || []).slice().sort();
+      if (!list.length) return;
+      const select = el('symbolSelect');
+      select.innerHTML = list.map((s) => `<option value="${s}">${s}</option>`).join('');
+      select.value = list.includes('BTCUSDT') ? 'BTCUSDT' : list[0];
+      symbol = select.value;
+    } catch {
+      // Keep the BTCUSDT fallback option already in the markup.
+    }
+  }
+
+  loadSymbols().then(tick);
   setInterval(tick, POLL_MS);
 })();
 </script>

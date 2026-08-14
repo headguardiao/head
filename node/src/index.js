@@ -5,6 +5,7 @@ import { logger } from './config/logger.js';
 import { BinanceAdapter } from './exchanges/binance/BinanceAdapter.js';
 import { OKXAdapter } from './exchanges/okx/OKXAdapter.js';
 import { MarketState } from './engine/marketState.js';
+import { symbolsFor } from './normalizer/symbols.js';
 
 export async function main() {
   const marketStates = new Map(env.symbols.map((s) => [s, new MarketState(s)]));
@@ -12,8 +13,13 @@ export async function main() {
   // Test phase: only Binance + OKX, public data only. Bybit/Bitget and
   // any other exchange are intentionally not wired up yet - add them as
   // new ExchangeAdapter subclasses under src/exchanges/<name>/ and push
-  // them onto this array.
-  const adapters = [new BinanceAdapter({ symbols: env.symbols }), new OKXAdapter({ symbols: env.symbols })];
+  // them onto this array. Each adapter only gets the symbols it actually
+  // has an instrument mapping for - not every tracked symbol has a live
+  // perpetual on both exchanges (e.g. BONK/PEPE are OKX-only here).
+  const adapters = [
+    new BinanceAdapter({ symbols: symbolsFor('binance', env.symbols) }),
+    new OKXAdapter({ symbols: symbolsFor('okx', env.symbols) }),
+  ];
 
   for (const adapter of adapters) {
     adapter.on('orderbook', (event) => {

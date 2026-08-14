@@ -21,6 +21,14 @@ const REST_BASE = 'https://fapi.binance.com';
 // gaps. Exponential backoff (capped) lets the budget actually drain.
 const SYNC_BACKOFF_BASE_MS = 5000;
 const SYNC_BACKOFF_MAX_MS = 60_000;
+// With many symbols tracked, every one of them buffers its first depth
+// event at roughly the same moment right after connecting, so without a
+// cap here they'd all fire their REST snapshot request in the same tick -
+// the exact burst pattern that got the test IP rate-limited/banned before
+// (see the README's "Validado em teste ao vivo" section). Capping
+// concurrent in-flight snapshot fetches spreads that burst out over a few
+// seconds as slots free up instead of hitting Binance all at once.
+const MAX_CONCURRENT_SYNCS = 4;
 // Bounded so an extended throttle/outage can't grow this without limit -
 // ~50s of buffered depth events at the ~100ms stream cadence, comfortably
 // more than any realistic REST round trip once synced.
@@ -36,6 +44,21 @@ export class BinanceAdapter extends ExchangeAdapter {
     this.nextSyncAttemptAt = new Map(symbols.map((s) => [s, 0]));
     this.syncFailureCount = new Map(symbols.map((s) => [s, 0]));
     this.lastUpdateId = new Map(symbols.map((s) => [s, 0]));
+    this._activeSyncs = 0;
+  }
+
+  /** Per-symbol sync state, surfaced on /health to diagnose "why is this
+   * symbol missing from the aggregated book" without needing log access. */
+  diagnostics() {
+    const out = {};
+    for (const s of this.symbols) {
+      out[s] = {
+        synced: this.synced.get(s) ?? false,
+        syncFailureCount: this.syncFailureCount.get(s) ?? 0,
+        bufferedEvents: this.buffers.get(s)?.length ?? 0,
+      };
+    }
+    return out;
   }
 
   getWsUrl() {
@@ -119,10 +142,21 @@ export class BinanceAdapter extends ExchangeAdapter {
   _maybeSync(canonical) {
     if (this.syncInFlight.get(canonical)) return;
     if (Date.now() < this.nextSyncAttemptAt.get(canonical)) return;
-    this._trySync(canonical).catch((err) => {
-      logger.error(`[binance] ${canonical} resync failed: ${err.message}`);
-      this._backoffNextSync(canonical);
-    });
+    if (this._activeSyncs >= MAX_CONCURRENT_SYNCS) {
+      // At capacity - retry shortly with jitter so the whole batch doesn't
+      // wake up and re-contend for a slot in lockstep.
+      this.nextSyncAttemptAt.set(canonical, Date.now() + 250 + Math.random() * 250);
+      return;
+    }
+    this._activeSyncs += 1;
+    this._trySync(canonical)
+      .catch((err) => {
+        logger.error(`[binance] ${canonical} resync failed: ${err.message}`);
+        this._backoffNextSync(canonical);
+      })
+      .finally(() => {
+        this._activeSyncs -= 1;
+      });
   }
 
   _backoffNextSync(canonical) {

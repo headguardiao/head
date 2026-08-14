@@ -2,8 +2,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { logger } from '../config/logger.js';
+import { env } from '../config/env.js';
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
+
+function countSynced(diagnostics) {
+  const symbols = Object.values(diagnostics);
+  return { synced: symbols.filter((d) => d.synced).length, total: symbols.length };
+}
 
 export function createServer({ marketStates, adapters, startedAt }) {
   const app = express();
@@ -26,6 +32,9 @@ export function createServer({ marketStates, adapters, startedAt }) {
       exchanges[adapter.name] = {
         connected: adapter.connected,
         lastMessageAgeMs: adapter.lastMessageAt ? Date.now() - adapter.lastMessageAt : null,
+        // Binance needs a REST snapshot per symbol before it contributes
+        // to the aggregated book - "connected" alone doesn't mean synced.
+        ...(adapter.diagnostics ? { syncedSymbols: countSynced(adapter.diagnostics()) } : {}),
       };
     }
     res.json({
@@ -33,6 +42,19 @@ export function createServer({ marketStates, adapters, startedAt }) {
       uptimeSec: Math.round((Date.now() - startedAt) / 1000),
       exchanges,
     });
+  });
+
+  app.get('/api/symbols', (_req, res) => {
+    res.json({ symbols: env.symbols });
+  });
+
+  app.get('/api/diagnostics/binance', (_req, res) => {
+    const adapter = adapters.find((a) => a.name === 'binance');
+    if (!adapter?.diagnostics) {
+      res.status(404).json({ error: 'binance adapter not available' });
+      return;
+    }
+    res.json(adapter.diagnostics());
   });
 
   app.get('/api/market/:symbol', (req, res) => {
