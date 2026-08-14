@@ -32,6 +32,12 @@ export class ExchangeAdapter extends EventEmitter {
     this.connected = false;
     this.lastMessageAt = null;
     this._loopPromise = null;
+    // Subclasses that poll REST for open interest/funding set this to a
+    // millisecond interval and implement restPollOnce(); left null means
+    // "no REST polling" (order-book-only adapters don't pay for a no-op
+    // loop).
+    this.restPollIntervalMs = null;
+    this._restPollLoopPromise = null;
   }
 
   // ---- to override in subclasses ----
@@ -51,12 +57,19 @@ export class ExchangeAdapter extends EventEmitter {
   sendHeartbeat(ws) {
     if (ws.readyState === WebSocket.OPEN) ws.ping();
   }
+
+  // Override alongside restPollIntervalMs to poll REST endpoints (open
+  // interest, funding) on a timer instead of over the WS stream.
+  async restPollOnce() {}
   // ------------------------------------
 
   start() {
     if (!this.stopped) return;
     this.stopped = false;
     this._loopPromise = this._loop();
+    if (this.restPollIntervalMs) {
+      this._restPollLoopPromise = this._restPollLoop();
+    }
   }
 
   async stop() {
@@ -71,6 +84,20 @@ export class ExchangeAdapter extends EventEmitter {
     }
     if (this._loopPromise) {
       await this._loopPromise;
+    }
+    if (this._restPollLoopPromise) {
+      await this._restPollLoopPromise;
+    }
+  }
+
+  async _restPollLoop() {
+    while (!this.stopped) {
+      try {
+        await this.restPollOnce();
+      } catch (err) {
+        logger.error(`[${this.name}] REST poll failed: ${err.stack || err.message}`);
+      }
+      await sleep(this.restPollIntervalMs);
     }
   }
 

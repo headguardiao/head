@@ -288,15 +288,23 @@
     badge.className = 'bias-badge ' + (bias === 'bullish' ? 'bullish' : bias === 'bearish' ? 'bearish' : 'neutral');
 
     el('confVal').textContent = data.confidence != null ? `confiança ${data.confidence}%` : '';
-    el('noteText').textContent = data.note || '';
+    const notePieces = [];
+    if (data.fundingRate != null) notePieces.push(`funding ${(data.fundingRate * 100).toFixed(4)}%`);
+    if (data.oiChangePct != null) notePieces.push(`OI ${data.oiChangePct >= 0 ? '+' : ''}${data.oiChangePct.toFixed(2)}% (15min)`);
+    if (data.liquidationNotionalUsd != null) notePieces.push(`liquidações ${fmtUsd(data.liquidationNotionalUsd)} (15min)`);
+    el('noteText').textContent = notePieces.join(' · ');
 
     const comps = data.components || {};
     const grid = el('componentsGrid');
     grid.innerHTML = '';
     const labels = {
       concentrationScore: 'Concentração',
+      removalScore: 'Remoção de liquidez',
+      oiScore: 'Open interest',
+      liquidationScore: 'Liquidações',
       imbalanceScore: 'Imbalance',
-      tradeFlowScore: 'Fluxo de trades',
+      cvdScore: 'CVD (fluxo)',
+      fundingScore: 'Funding',
       confirmationScore: 'Confirmação',
     };
     for (const [key, label] of Object.entries(labels)) {

@@ -32,4 +32,37 @@ export const NormalizedTradeSchema = z.object({
   sequence: z.number().int().nonnegative(),
 });
 
-export const NormalizedEventSchema = z.union([NormalizedOrderBookSchema, NormalizedTradeSchema]);
+export const NormalizedOpenInterestSchema = z.object({
+  eventType: z.literal('openInterest'),
+  exchange: z.string().min(1),
+  symbol: z.string().min(1),
+  valueUsd: z.number().nonnegative(),
+  timestamp: z.number().int().positive(),
+});
+
+export const NormalizedFundingSchema = z.object({
+  eventType: z.literal('funding'),
+  exchange: z.string().min(1),
+  symbol: z.string().min(1),
+  rate: z.number(),
+  nextFundingTime: z.number().int().nonnegative(),
+  timestamp: z.number().int().positive(),
+});
+
+export const NormalizedLiquidationSchema = z.object({
+  eventType: z.literal('liquidation'),
+  exchange: z.string().min(1),
+  symbol: z.string().min(1),
+  price: z.number().positive(),
+  quantity: z.number().positive(),
+  side: Side,
+  timestamp: z.number().int().positive(),
+});
+
+export const NormalizedEventSchema = z.union([
+  NormalizedOrderBookSchema,
+  NormalizedTradeSchema,
+  NormalizedOpenInterestSchema,
+  NormalizedFundingSchema,
+  NormalizedLiquidationSchema,
+]);

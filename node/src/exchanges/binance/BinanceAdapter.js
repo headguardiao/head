@@ -2,7 +2,13 @@ import { ExchangeAdapter } from '../base/ExchangeAdapter.js';
 import { LocalOrderBook } from '../../engine/localOrderBook.js';
 import { canonicalFromExchange, exchangeSymbol } from '../../normalizer/symbols.js';
 import { notionalUsd } from '../../normalizer/notional.js';
-import { validateOrderBookEvent, validateTradeEvent } from '../../normalizer/validate.js';
+import {
+  validateOrderBookEvent,
+  validateTradeEvent,
+  validateOpenInterestEvent,
+  validateFundingEvent,
+  validateLiquidationEvent,
+} from '../../normalizer/validate.js';
 import { env } from '../../config/env.js';
 import { logger } from '../../config/logger.js';
 import { hasSequenceGap } from './sequence.js';
@@ -44,6 +50,15 @@ const MIN_SYNC_INTERVAL_MS = 1000;
 // ~50s of buffered depth events at the ~100ms stream cadence, comfortably
 // more than any realistic REST round trip once synced.
 const MAX_BUFFERED_EVENTS = 500;
+const REST_POLL_INTERVAL_MS = 30_000;
+// Open interest has no bulk endpoint (unlike premiumIndex), so it's one
+// request per symbol - spaced out so a 94-symbol poll cycle doesn't burst
+// the same way the snapshot sync did.
+const OI_POLL_SPACING_MS = 150;
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 export class BinanceAdapter extends ExchangeAdapter {
   constructor({ symbols }) {
@@ -58,6 +73,7 @@ export class BinanceAdapter extends ExchangeAdapter {
     this._activeSyncs = 0;
     this._lastSyncStartedAt = 0;
     this._lastSyncError = null;
+    this.restPollIntervalMs = REST_POLL_INTERVAL_MS;
   }
 
   /** Per-symbol sync state, surfaced on /health to diagnose "why is this
@@ -80,7 +96,7 @@ export class BinanceAdapter extends ExchangeAdapter {
   getWsUrl() {
     const streams = this.symbols.flatMap((s) => {
       const sym = exchangeSymbol(s, 'binance').toLowerCase();
-      return [`${sym}@depth@100ms`, `${sym}@aggTrade`];
+      return [`${sym}@depth@100ms`, `${sym}@aggTrade`, `${sym}@forceOrder`];
     });
     return `${WS_BASE}/stream?streams=${streams.join('/')}`;
   }
@@ -99,8 +115,30 @@ export class BinanceAdapter extends ExchangeAdapter {
     const data = msg.data ?? {};
     if (stream.endsWith('@aggTrade')) {
       this._handleTrade(data);
+    } else if (stream.endsWith('@forceOrder')) {
+      this._handleLiquidation(data);
     } else if (stream.includes('@depth')) {
       this._handleDepth(data);
+    }
+  }
+
+  _handleLiquidation(data) {
+    const order = data.o ?? {};
+    const canonical = canonicalFromExchange('binance', order.s);
+    if (!canonical) return;
+    const event = {
+      eventType: 'liquidation',
+      exchange: this.name,
+      symbol: canonical,
+      price: Number(order.ap),
+      quantity: Number(order.q),
+      side: order.S === 'BUY' ? 'buy' : 'sell',
+      timestamp: order.T,
+    };
+    try {
+      this.emit('liquidation', validateLiquidationEvent(event));
+    } catch (err) {
+      logger.error(`[binance] invalid liquidation event: ${err.message}`);
     }
   }
 
@@ -264,6 +302,60 @@ export class BinanceAdapter extends ExchangeAdapter {
       this.emit('orderbook', validateOrderBookEvent(event));
     } catch (err) {
       logger.error(`[binance] invalid orderbook event: ${err.message}`);
+    }
+  }
+
+  async restPollOnce() {
+    // premiumIndex without a symbol returns funding rate + mark price for
+    // every symbol in one request - far cheaper than 94 individual calls.
+    const resp = await fetch(`${REST_BASE}/fapi/v1/premiumIndex`);
+    const rows = await resp.json();
+    if (!Array.isArray(rows)) {
+      logger.warn(`[binance] premiumIndex poll failed: ${JSON.stringify(rows)}`);
+      return;
+    }
+    const markPriceBySymbol = new Map();
+    const now = Date.now();
+    for (const row of rows) {
+      const canonical = canonicalFromExchange('binance', row.symbol);
+      if (!canonical || !this.symbols.includes(canonical)) continue;
+      markPriceBySymbol.set(canonical, Number(row.markPrice));
+      const event = {
+        eventType: 'funding',
+        exchange: this.name,
+        symbol: canonical,
+        rate: Number(row.lastFundingRate),
+        nextFundingTime: Number(row.nextFundingTime),
+        timestamp: now,
+      };
+      try {
+        this.emit('funding', validateFundingEvent(event));
+      } catch (err) {
+        logger.error(`[binance] invalid funding event: ${err.message}`);
+      }
+    }
+
+    // Open interest has no bulk endpoint - poll per symbol, spaced out to
+    // avoid another rate-limit burst like the depth-snapshot one.
+    for (const canonical of this.symbols) {
+      const symbol = exchangeSymbol(canonical, 'binance');
+      try {
+        const oiResp = await fetch(`${REST_BASE}/fapi/v1/openInterest?symbol=${symbol}`);
+        const oiData = await oiResp.json();
+        const markPrice = markPriceBySymbol.get(canonical);
+        if (!oiData.openInterest || !markPrice) continue;
+        const event = {
+          eventType: 'openInterest',
+          exchange: this.name,
+          symbol: canonical,
+          valueUsd: Number(oiData.openInterest) * markPrice,
+          timestamp: Date.now(),
+        };
+        this.emit('openInterest', validateOpenInterestEvent(event));
+      } catch (err) {
+        logger.error(`[binance] open interest poll failed for ${symbol}: ${err.message}`);
+      }
+      await sleep(OI_POLL_SPACING_MS);
     }
   }
 }

@@ -12,9 +12,11 @@ import { symbolsFor } from './normalizer/symbols.js';
 export async function main() {
   const marketStates = new Map(env.symbols.map((s) => [s, new MarketState(s)]));
 
-  // Public data only, order book + trades (no open interest/funding/
-  // liquidations yet - that's a separate phase). Any other exchange gets
-  // wired up the same way: a new ExchangeAdapter subclass under
+  // Public data only: order book, trades, open interest, funding, and
+  // liquidations where the exchange makes them straightforward to stream
+  // (Binance forceOrder, Bybit allLiquidation, OKX liquidation-orders;
+  // Bitget's liquidation channel isn't wired up yet). Any other exchange
+  // gets wired up the same way: a new ExchangeAdapter subclass under
   // src/exchanges/<name>/, pushed onto this array. Each adapter only gets
   // the symbols it actually has an instrument mapping for - not every
   // tracked symbol has a live perpetual on all four exchanges (e.g.
@@ -32,6 +34,15 @@ export async function main() {
     });
     adapter.on('trade', (event) => {
       marketStates.get(event.symbol)?.onTrade(event);
+    });
+    adapter.on('openInterest', (event) => {
+      marketStates.get(event.symbol)?.onOpenInterest(event);
+    });
+    adapter.on('funding', (event) => {
+      marketStates.get(event.symbol)?.onFunding(event);
+    });
+    adapter.on('liquidation', (event) => {
+      marketStates.get(event.symbol)?.onLiquidation(event);
     });
     adapter.on('error', (err) => {
       logger.error(`[${adapter.name}] ${err.stack || err.message}`);

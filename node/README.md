@@ -4,14 +4,14 @@ Implementação Node.js do Forge, isolada do protótipo Python que vive em
 `../` (fora desta pasta) — nenhum dos dois mexe no código do outro.
 
 **Escopo desta fase:** **Binance, OKX, Bybit e Bitget** (94 símbolos —
-veja `src/normalizer/symbols.js`), dados públicos de mercado (order book +
-trades), sem API keys privadas, sem execução de ordens. Open interest,
-funding e liquidações ficam para uma fase seguinte — a arquitetura já foi
-deixada pronta para isso (veja "Como adicionar uma exchange" abaixo).
+veja `src/normalizer/symbols.js`), dados públicos de mercado: order book,
+trades, open interest, funding rate e liquidações (onde a exchange expõe
+de forma direta — ver "Limitações conhecidas"). Sem API keys privadas,
+sem execução de ordens.
 
 ```
 Exchange WS/REST → Adapter → Normalizer (schema validado com zod) →
-  Liquidity Engine → Score Engine (provisório) → API HTTP
+  Liquidity Engine + histórico (OI/liquidações/heatmap) → Score Engine → API HTTP
 ```
 
 ## Rodar localmente
@@ -65,15 +65,19 @@ endpoints públicos.
   exchanges conectadas, imbalance do order book, maiores paredes de
   liquidez, contagem de trades recentes.
 - `GET /api/score/:symbol` — `{ hasEnoughData: false, reason }` se ainda
-  não há order book para o símbolo, ou o score provisório com
-  `liquidityScore`, `bias`, `confidence` e o detalhamento por componente.
+  não há order book para o símbolo, ou o `LIQUIDITY_SCORE` completo com
+  `liquidityScore`, `bias`, `confidence`, `fundingRate`, `oiChangePct`,
+  `liquidationNotionalUsd` e o detalhamento por componente.
+- `GET /api/symbols` — lista de símbolos rastreados nesta instância.
+- `GET /api/diagnostics/binance` — estado de sincronização do order book
+  por símbolo na Binance (útil pra depurar rate-limit sem acesso a logs).
 
-**O score desta fase é provisório**, calculado só com o que é coletado
-agora (concentração de liquidez, imbalance do order book, fluxo de
-trades recente, confirmação entre Binance+OKX). Ele **não** é o
-`LIQUIDITY_SCORE` completo da arquitetura original — falta open interest,
-funding e liquidações, que exigem os adapters dessas exchanges/streams
-ainda não implementados nesta fase.
+O `LIQUIDITY_SCORE` segue os pesos da seção 7 do PDF de arquitetura:
+concentração de liquidez 25%, remoção de liquidez 15%, open interest 15%,
+liquidações 15%, imbalance do order book 10%, CVD 10%, funding rate 5%,
+confirmação entre exchanges 5% (mínimo de 4 conectadas pra confiança
+plena). A implementação espelha `forge/engine/score_engine.py` (o
+protótipo Python) componente a componente.
 
 ## Como adicionar uma exchange
 
@@ -83,13 +87,23 @@ ainda não implementados nesta fase.
    `handleMessage(raw)`.
 2. Adicionar o mapeamento de símbolo em `src/normalizer/symbols.js`.
 3. Emitir eventos `orderbook`/`trade` já validados pelo schema
-   (`src/normalizer/validate.js`).
+   (`src/normalizer/validate.js`). Opcionalmente, também `openInterest`/
+   `funding` (implementando `restPollOnce()` + `this.restPollIntervalMs`
+   — a classe base já cuida do loop) e `liquidation` (via WS, se a
+   exchange expuser o canal).
 4. Registrar a nova instância em `src/index.js` (array `adapters`).
 
 ## Limitações conhecidas
 
-- Sem open interest, funding rate ou liquidações ainda — o score é
-  parcial (ver acima).
+- Liquidações: implementadas para Binance (`<symbol>@forceOrder`), Bybit
+  (`allLiquidation.<symbol>`) e OKX (`liquidation-orders`, uma inscrição
+  cobre todos os símbolos SWAP). Bitget não tem esse canal cabeado ainda
+  (o protótipo Python também não implementou lá) — sem dado de
+  liquidação da Bitget, esse componente do score cai naturalmente para 0
+  quando as outras três também não têm liquidação recente.
+- `next_funding_time` da Bitget fica em 0 — o endpoint usado
+  (`current-fund-rate`/`tickers`) não expõe esse campo, herdado do mesmo
+  caveat do protótipo Python.
 - OKX, Bybit e Bitget não expõem sequência por mensagem no canal de book
   como a Binance; a detecção de duplicidade/gap hoje é forte só no
   adapter da Binance (via `pu`/`u`). Checksum de integridade do book das
