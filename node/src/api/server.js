@@ -1,5 +1,9 @@
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { logger } from '../config/logger.js';
+
+const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 
 export function createServer({ marketStates, adapters, startedAt }) {
   const app = express();
@@ -10,6 +14,10 @@ export function createServer({ marketStates, adapters, startedAt }) {
     res.setHeader('Access-Control-Allow-Origin', '*');
     res.setHeader('Access-Control-Allow-Methods', 'GET');
     next();
+  });
+
+  app.get('/dashboard', (_req, res) => {
+    res.sendFile(path.join(publicDir, 'dashboard.html'));
   });
 
   app.get('/health', (_req, res) => {

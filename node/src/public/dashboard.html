@@ -1,0 +1,394 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Forge Heatmap</title>
+<style>
+  :root {
+    --surface-page:   #f9f9f7;
+    --surface-card:   #fcfcfb;
+    --ink-primary:    #0b0b0b;
+    --ink-secondary:  #52514e;
+    --ink-muted:      #898781;
+    --gridline:       #e1e0d9;
+    --border:         rgba(11,11,11,0.10);
+    --bid:            #2a78d6;
+    --ask:            #e34948;
+    --good:           #0ca30c;
+    --warning:        #c98500;
+    --critical:       #d03b3b;
+    --mono: ui-monospace, "SF Mono", "Cascadia Code", "Roboto Mono", Consolas, monospace;
+    --sans: system-ui, -apple-system, "Segoe UI", sans-serif;
+    color-scheme: light;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --surface-page:   #0d0d0d;
+      --surface-card:   #1a1a19;
+      --ink-primary:    #ffffff;
+      --ink-secondary:  #c3c2b7;
+      --ink-muted:      #898781;
+      --gridline:       #2c2c2a;
+      --border:         rgba(255,255,255,0.10);
+      --bid:            #3987e5;
+      --ask:            #e66767;
+      --good:           #0ca30c;
+      --warning:        #fab219;
+      --critical:       #e66767;
+      color-scheme: dark;
+    }
+  }
+  :root[data-theme="dark"] {
+    --surface-page:   #0d0d0d;
+    --surface-card:   #1a1a19;
+    --ink-primary:    #ffffff;
+    --ink-secondary:  #c3c2b7;
+    --ink-muted:      #898781;
+    --gridline:       #2c2c2a;
+    --border:         rgba(255,255,255,0.10);
+    --bid:            #3987e5;
+    --ask:            #e66767;
+    --good:           #0ca30c;
+    --warning:        #fab219;
+    --critical:       #e66767;
+    color-scheme: dark;
+  }
+
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--surface-page);
+    color: var(--ink-primary);
+    font-family: var(--sans);
+    padding: 28px 20px 60px;
+  }
+  .wrap { max-width: 920px; margin: 0 auto; display: flex; flex-direction: column; gap: 18px; }
+
+  .hdr { display: flex; align-items: flex-start; justify-content: space-between; gap: 16px; flex-wrap: wrap; }
+  .hdr h1 { font-size: 1.5rem; margin: 0 0 2px; letter-spacing: -0.01em; text-wrap: balance; }
+  .hdr p { margin: 0; color: var(--ink-secondary); font-size: 0.88rem; }
+  .hdr-right { display: flex; align-items: center; gap: 10px; }
+  select {
+    font-family: var(--sans); font-size: 0.85rem; font-weight: 600;
+    background: var(--surface-card); color: var(--ink-primary);
+    border: 1px solid var(--border); border-radius: 8px; padding: 7px 10px;
+    cursor: pointer;
+  }
+
+  .conns { display: flex; gap: 8px; flex-wrap: wrap; }
+  .chip {
+    display: inline-flex; align-items: center; gap: 6px;
+    font-size: 0.78rem; font-weight: 600; padding: 5px 10px 5px 8px;
+    border-radius: 999px; background: var(--surface-card); border: 1px solid var(--border);
+    color: var(--ink-secondary);
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .dot.good { background: var(--good); box-shadow: 0 0 0 3px color-mix(in srgb, var(--good) 20%, transparent); }
+  .dot.bad { background: var(--critical); box-shadow: 0 0 0 3px color-mix(in srgb, var(--critical) 20%, transparent); }
+  .dot.stale { background: var(--warning); }
+
+  .card {
+    background: var(--surface-card); border: 1px solid var(--border);
+    border-radius: 14px; padding: 20px;
+  }
+
+  .hero { display: flex; align-items: center; gap: 28px; flex-wrap: wrap; }
+  .score-ring { position: relative; width: 128px; height: 128px; flex: none; }
+  .score-ring svg { transform: rotate(-90deg); width: 100%; height: 100%; }
+  .score-ring .bg { fill: none; stroke: var(--gridline); stroke-width: 10; }
+  .score-ring .fg { fill: none; stroke: var(--bid); stroke-width: 10; stroke-linecap: round; transition: stroke-dashoffset 0.6s ease, stroke 0.3s ease; }
+  .score-ring .num {
+    position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+  }
+  .score-ring .num b { font-family: var(--mono); font-size: 2rem; font-variant-numeric: tabular-nums; line-height: 1; }
+  .score-ring .num span { font-size: 0.65rem; color: var(--ink-muted); text-transform: uppercase; letter-spacing: 0.06em; margin-top: 2px; }
+
+  .hero-meta { display: flex; flex-direction: column; gap: 10px; flex: 1; min-width: 220px; }
+  .bias-badge {
+    display: inline-flex; align-items: center; gap: 6px; align-self: flex-start;
+    font-size: 0.82rem; font-weight: 700; letter-spacing: 0.02em;
+    padding: 5px 12px; border-radius: 999px;
+  }
+  .bias-badge.bullish { background: color-mix(in srgb, var(--good) 16%, transparent); color: var(--good); }
+  .bias-badge.bearish { background: color-mix(in srgb, var(--critical) 16%, transparent); color: var(--critical); }
+  .bias-badge.neutral { background: var(--gridline); color: var(--ink-secondary); }
+  .price-row { display: flex; align-items: baseline; gap: 10px; }
+  .price-row .price { font-family: var(--mono); font-size: 1.7rem; font-variant-numeric: tabular-nums; font-weight: 600; }
+  .price-row .conf { font-size: 0.8rem; color: var(--ink-muted); }
+  .note { font-size: 0.78rem; color: var(--ink-muted); line-height: 1.4; }
+
+  .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; }
+  .metric { display: flex; flex-direction: column; gap: 6px; }
+  .metric .label { font-size: 0.72rem; text-transform: uppercase; letter-spacing: 0.06em; color: var(--ink-muted); }
+  .metric .val { font-family: var(--mono); font-size: 1.1rem; font-variant-numeric: tabular-nums; }
+  .bar-track { height: 6px; border-radius: 999px; background: var(--gridline); overflow: hidden; }
+  .bar-fill { height: 100%; background: var(--bid); border-radius: 999px; transition: width 0.5s ease; }
+
+  .wall-row { display: flex; flex-direction: column; gap: 8px; }
+  .wall-row .lbl-row { display: flex; justify-content: space-between; font-size: 0.78rem; color: var(--ink-secondary); font-family: var(--mono); font-variant-numeric: tabular-nums; }
+  .wall-bar { display: flex; height: 22px; border-radius: 6px; overflow: hidden; border: 1px solid var(--border); }
+  .wall-bar .bid { background: var(--bid); }
+  .wall-bar .ask { background: var(--ask); }
+  .wall-legend { display: flex; gap: 16px; font-size: 0.76rem; color: var(--ink-muted); }
+  .wall-legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .swatch { width: 9px; height: 9px; border-radius: 2px; }
+
+  .imb-track { position: relative; height: 10px; border-radius: 999px; background: linear-gradient(90deg, var(--bid), var(--gridline) 50%, var(--ask)); }
+  .imb-marker { position: absolute; top: -4px; width: 3px; height: 18px; background: var(--ink-primary); border-radius: 2px; transform: translateX(-50%); transition: left 0.5s ease; }
+  .imb-labels { display: flex; justify-content: space-between; font-size: 0.7rem; color: var(--ink-muted); margin-top: 4px; }
+
+  .section-title { font-size: 0.85rem; font-weight: 700; margin: 0 0 12px; }
+  .two-col { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 560px) { .two-col { grid-template-columns: 1fr; } }
+
+  .foot { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; font-size: 0.76rem; color: var(--ink-muted); }
+  .foot a { color: var(--bid); text-decoration: none; }
+  .foot a:hover { text-decoration: underline; }
+
+  .status-banner {
+    display: none; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 10px;
+    background: color-mix(in srgb, var(--warning) 14%, transparent); color: var(--ink-primary); font-size: 0.85rem;
+  }
+  .status-banner.show { display: flex; }
+  .spinner {
+    width: 14px; height: 14px; border-radius: 50%; flex: none;
+    border: 2px solid var(--border); border-top-color: var(--warning);
+    animation: spin 0.8s linear infinite;
+  }
+  @media (prefers-reduced-motion: reduce) { .spinner { animation: none; } }
+  @keyframes spin { to { transform: rotate(360deg); } }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="hdr">
+    <div>
+      <h1>Forge Heatmap</h1>
+      <p>Score de liquidez multiexchange &mdash; dados públicos, tempo real</p>
+    </div>
+    <div class="hdr-right">
+      <select id="symbolSelect">
+        <option value="BTCUSDT">BTCUSDT</option>
+        <option value="ETHUSDT">ETHUSDT</option>
+      </select>
+    </div>
+  </div>
+
+  <div class="conns" id="conns"></div>
+
+  <div id="wakeBanner" class="status-banner">
+    <div class="spinner"></div>
+    <span>Reconectando às exchanges&hellip; se o serviço tinha acabado de hibernar (plano free do Render), isso pode levar de 30 a 60s na primeira vez.</span>
+  </div>
+
+  <div class="card hero">
+    <div class="score-ring">
+      <svg viewBox="0 0 128 128">
+        <circle class="bg" cx="64" cy="64" r="54"></circle>
+        <circle class="fg" id="scoreArc" cx="64" cy="64" r="54" stroke-dasharray="339.3" stroke-dashoffset="339.3"></circle>
+      </svg>
+      <div class="num">
+        <b id="scoreNum">&mdash;</b>
+        <span>score</span>
+      </div>
+    </div>
+    <div class="hero-meta">
+      <span class="bias-badge neutral" id="biasBadge">&mdash;</span>
+      <div class="price-row">
+        <span class="price" id="priceVal">&mdash;</span>
+        <span class="conf" id="confVal"></span>
+      </div>
+      <p class="note" id="noteText"></p>
+    </div>
+  </div>
+
+  <div class="card">
+    <p class="section-title">Componentes do score</p>
+    <div class="grid" id="componentsGrid"></div>
+  </div>
+
+  <div class="two-col">
+    <div class="card">
+      <p class="section-title">Maior parede de liquidez</p>
+      <div class="wall-row" id="wallRow">
+        <div class="lbl-row"><span>&mdash;</span><span>&mdash;</span></div>
+        <div class="wall-bar"><div class="bid" style="width:50%"></div><div class="ask" style="width:50%"></div></div>
+        <div class="wall-legend">
+          <span><span class="swatch" style="background:var(--bid)"></span>Bid (compra)</span>
+          <span><span class="swatch" style="background:var(--ask)"></span>Ask (venda)</span>
+        </div>
+      </div>
+    </div>
+    <div class="card">
+      <p class="section-title">Imbalance do order book</p>
+      <div class="imb-track"><div class="imb-marker" id="imbMarker" style="left:50%"></div></div>
+      <div class="imb-labels"><span>vendedor</span><span id="imbVal">0.00</span><span>comprador</span></div>
+    </div>
+  </div>
+
+  <div class="foot">
+    <span id="lastUpdate">carregando&hellip;</span>
+    <span>
+      <a href="/api/score/BTCUSDT" target="_blank" rel="noopener">API score</a>
+      &nbsp;&middot;&nbsp;
+      <a href="/health" target="_blank" rel="noopener">API health</a>
+    </span>
+  </div>
+</div>
+
+<script>
+(function () {
+  const POLL_MS = 6000;
+  let symbol = 'BTCUSDT';
+
+  const el = (id) => document.getElementById(id);
+  const fmtUsd = (n) => {
+    if (n == null || Number.isNaN(n)) return '—';
+    if (n >= 1e6) return '$' + (n / 1e6).toFixed(1) + 'M';
+    if (n >= 1e3) return '$' + (n / 1e3).toFixed(1) + 'K';
+    return '$' + n.toFixed(0);
+  };
+  const fmtPrice = (n) => n == null ? '—' : '$' + n.toLocaleString('en-US', { maximumFractionDigits: 2 });
+
+  function renderConns(health) {
+    const wrap = el('conns');
+    wrap.innerHTML = '';
+    if (!health || !health.exchanges) return;
+    for (const [name, info] of Object.entries(health.exchanges)) {
+      const age = info.lastMessageAgeMs;
+      let dotClass = 'bad';
+      if (info.connected && age != null && age < 5000) dotClass = 'good';
+      else if (info.connected) dotClass = 'stale';
+      const chip = document.createElement('span');
+      chip.className = 'chip';
+      chip.innerHTML = `<span class="dot ${dotClass}"></span>${name}`;
+      wrap.appendChild(chip);
+    }
+  }
+
+  function renderScore(data) {
+    const ring = el('scoreArc');
+    const CIRC = 339.3;
+    if (data.hasEnoughData === false) {
+      el('scoreNum').textContent = '—';
+      ring.style.strokeDashoffset = CIRC;
+      el('biasBadge').textContent = 'sem dados';
+      el('biasBadge').className = 'bias-badge neutral';
+      el('noteText').textContent = data.reason || 'Aguardando order book suficiente.';
+      el('componentsGrid').innerHTML = '';
+      return;
+    }
+    const score = data.liquidityScore ?? 0;
+    el('scoreNum').textContent = score.toFixed(1);
+    const offset = CIRC - (Math.min(Math.max(score, 0), 100) / 100) * CIRC;
+    ring.style.strokeDashoffset = offset;
+    ring.style.stroke = score >= 60 ? 'var(--good)' : score >= 35 ? 'var(--warning)' : 'var(--critical)';
+
+    const bias = (data.bias || 'NEUTRAL').toLowerCase();
+    const badge = el('biasBadge');
+    badge.textContent = data.bias || 'NEUTRAL';
+    badge.className = 'bias-badge ' + (bias === 'bullish' ? 'bullish' : bias === 'bearish' ? 'bearish' : 'neutral');
+
+    el('confVal').textContent = data.confidence != null ? `confiança ${data.confidence}%` : '';
+    el('noteText').textContent = data.note || '';
+
+    const comps = data.components || {};
+    const grid = el('componentsGrid');
+    grid.innerHTML = '';
+    const labels = {
+      concentrationScore: 'Concentração',
+      imbalanceScore: 'Imbalance',
+      tradeFlowScore: 'Fluxo de trades',
+      confirmationScore: 'Confirmação',
+    };
+    for (const [key, label] of Object.entries(labels)) {
+      const v = comps[key];
+      if (v == null) continue;
+      const m = document.createElement('div');
+      m.className = 'metric';
+      m.innerHTML = `
+        <span class="label">${label}</span>
+        <span class="val">${v.toFixed(1)}</span>
+        <div class="bar-track"><div class="bar-fill" style="width:${Math.min(Math.max(v,0),100)}%"></div></div>
+      `;
+      grid.appendChild(m);
+    }
+
+    const wall = (data.topLiquidityWalls || [])[0];
+    if (wall) {
+      const bid = wall.bidNotionalUsd || 0;
+      const ask = wall.askNotionalUsd || 0;
+      const total = bid + ask || 1;
+      const wallRow = el('wallRow');
+      wallRow.innerHTML = `
+        <div class="lbl-row"><span>${fmtUsd(bid)} bid</span><span>${fmtUsd(ask)} ask</span></div>
+        <div class="wall-bar">
+          <div class="bid" style="width:${(bid/total*100).toFixed(1)}%"></div>
+          <div class="ask" style="width:${(ask/total*100).toFixed(1)}%"></div>
+        </div>
+        <div class="wall-legend">
+          <span><span class="swatch" style="background:var(--bid)"></span>Bid (compra) @ ${fmtPrice(wall.price)}</span>
+          <span><span class="swatch" style="background:var(--ask)"></span>Ask (venda)</span>
+        </div>
+      `;
+    }
+
+    const imb = data.orderbookImbalance;
+    if (imb != null) {
+      const pct = ((Math.min(Math.max(imb, -1), 1) + 1) / 2) * 100;
+      el('imbMarker').style.left = pct + '%';
+      el('imbVal').textContent = imb.toFixed(2);
+    }
+  }
+
+  function renderMarket(data) {
+    if (data.midPrice != null) el('priceVal').textContent = fmtPrice(data.midPrice);
+  }
+
+  function showWakeBanner(show) {
+    el('wakeBanner').classList.toggle('show', show);
+  }
+
+  async function fetchJson(path, timeoutMs) {
+    const ctrl = new AbortController();
+    const t = setTimeout(() => ctrl.abort(), timeoutMs);
+    try {
+      const res = await fetch(path, { signal: ctrl.signal });
+      clearTimeout(t);
+      if (!res.ok) throw new Error('HTTP ' + res.status);
+      return await res.json();
+    } finally {
+      clearTimeout(t);
+    }
+  }
+
+  async function tick() {
+    try {
+      const [health, market, score] = await Promise.all([
+        fetchJson('/health', 8000),
+        fetchJson('/api/market/' + symbol, 8000),
+        fetchJson('/api/score/' + symbol, 8000),
+      ]);
+      showWakeBanner(false);
+      renderConns(health);
+      renderMarket(market);
+      renderScore(score);
+      el('lastUpdate').textContent = 'atualizado às ' + new Date().toLocaleTimeString('pt-BR');
+    } catch (err) {
+      showWakeBanner(true);
+      el('lastUpdate').textContent = 'tentando reconectar…';
+    }
+  }
+
+  el('symbolSelect').addEventListener('change', (e) => {
+    symbol = e.target.value;
+    tick();
+  });
+
+  tick();
+  setInterval(tick, POLL_MS);
+})();
+</script>
+</body>
+</html>
