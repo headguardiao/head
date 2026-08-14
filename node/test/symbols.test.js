@@ -8,9 +8,9 @@ test('exchangeSymbol maps canonical symbols to each exchange format', () => {
 });
 
 test('canonicalFromExchange round-trips for every symbol/exchange pair that exists', () => {
-  // Not every tracked symbol has a live perpetual on both exchanges (e.g.
-  // BONK/PEPE are OKX-only) - only round-trip pairs symbolsFor() confirms.
-  for (const exchange of ['binance', 'okx']) {
+  // Not every tracked symbol has a live perpetual on every exchange (e.g.
+  // BONK is OKX-only) - only round-trip pairs symbolsFor() confirms.
+  for (const exchange of ['binance', 'okx', 'bybit', 'bitget']) {
     for (const canonical of symbolsFor(exchange)) {
       const exSymbol = exchangeSymbol(canonical, exchange);
       assert.equal(canonicalFromExchange(exchange, exSymbol), canonical);
@@ -21,13 +21,20 @@ test('canonicalFromExchange round-trips for every symbol/exchange pair that exis
 test('symbolsFor only returns symbols with a live mapping on that exchange', () => {
   assert.ok(symbolsFor('okx').includes('BONKUSDT'));
   assert.ok(!symbolsFor('binance').includes('BONKUSDT'));
-  assert.equal(trackedSymbols().length, symbolsFor('binance').length + symbolsFor('okx').length - intersectionCount());
+  assert.ok(!symbolsFor('bybit').includes('BONKUSDT'));
 });
 
-function intersectionCount() {
-  const b = new Set(symbolsFor('binance'));
-  return symbolsFor('okx').filter((s) => b.has(s)).length;
-}
+test('every tracked symbol has a mapping on at least one exchange', () => {
+  const covered = new Set([
+    ...symbolsFor('binance'),
+    ...symbolsFor('okx'),
+    ...symbolsFor('bybit'),
+    ...symbolsFor('bitget'),
+  ]);
+  for (const canonical of trackedSymbols()) {
+    assert.ok(covered.has(canonical), `${canonical} has no exchange mapping`);
+  }
+});
 
 test('canonicalFromExchange returns null for unknown symbols', () => {
   assert.equal(canonicalFromExchange('binance', 'DOESNOTEXIST'), null);

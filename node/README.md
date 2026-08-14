@@ -3,11 +3,11 @@
 Implementação Node.js do Forge, isolada do protótipo Python que vive em
 `../` (fora desta pasta) — nenhum dos dois mexe no código do outro.
 
-**Escopo desta fase:** somente **Binance** e **OKX**, dados públicos de
-mercado (order book + trades), sem API keys privadas, sem execução de
-ordens. Bybit, Bitget, open interest, funding e liquidações ficam para
-uma fase seguinte — a arquitetura já foi deixada pronta para isso (veja
-"Como adicionar uma exchange" abaixo).
+**Escopo desta fase:** **Binance, OKX, Bybit e Bitget** (94 símbolos —
+veja `src/normalizer/symbols.js`), dados públicos de mercado (order book +
+trades), sem API keys privadas, sem execução de ordens. Open interest,
+funding e liquidações ficam para uma fase seguinte — a arquitetura já foi
+deixada pronta para isso (veja "Como adicionar uma exchange" abaixo).
 
 ```
 Exchange WS/REST → Adapter → Normalizer (schema validado com zod) →
@@ -88,13 +88,19 @@ ainda não implementados nesta fase.
 
 ## Limitações conhecidas
 
-- Só Binance + OKX; Bybit/Bitget ficam para a próxima fase.
 - Sem open interest, funding rate ou liquidações ainda — o score é
   parcial (ver acima).
-- OKX não expõe sequência por mensagem no canal `books` como a Binance;
-  a detecção de duplicidade/gap hoje é forte só no adapter da Binance
-  (via `pu`/`u`). Checksum de integridade do book da OKX ainda não é
-  validado.
+- OKX, Bybit e Bitget não expõem sequência por mensagem no canal de book
+  como a Binance; a detecção de duplicidade/gap hoje é forte só no
+  adapter da Binance (via `pu`/`u`). Checksum de integridade do book das
+  outras três ainda não é validado.
+- BONK e PEPE só existem na Binance/Bybit sob ticker escalado 1000x
+  (`1000BONKUSDT`/`1000PEPEUSDT`) — deliberadamente não mapeado, ficam só
+  nas exchanges que os listam a 1x (OKX/Bitget) pra não precisar de um
+  caminho de reescala de preço à parte.
+- Com 94 símbolos em 4 exchanges, o uso de CPU/memória é bem maior que a
+  fase de 2 símbolos original — em instância free/nano de plataforma
+  gerenciada, vale monitorar se não estoura os limites de recurso.
 - Sem persistência: todo o estado é em memória e reinicia com o
   processo (esperado para uma API stateless em plataforma gerenciada).
 - Rate limit da Binance: o snapshot REST inicial do order book
