@@ -138,11 +138,14 @@
 </p>
 
 <div class="banner">
-  ⚠️ Ferramenta local de teste, sem autenticação. O <code>user_id</code> abaixo
-  é só um identificador em texto livre — qualquer pessoa com acesso a este
-  servidor pode ver/gerenciar conexões de qualquer <code>user_id</code>.
-  Não exponha esta porta publicamente. Use, de preferência, uma API key
-  <strong>somente leitura</strong> e restrita por IP na exchange.
+  ⚠️ Ferramenta de teste. O <code>user_id</code> abaixo é só um
+  identificador em texto livre — qualquer chamada autenticada pode ver/
+  gerenciar conexões de qualquer <code>user_id</code>. Se o servidor foi
+  iniciado com <code>FORGE_API_KEY</code> definida, preencha a chave
+  abaixo (senão toda chamada volta <code>401</code>); se não, o servidor
+  está sem autenticação nenhuma — não exponha essa porta publicamente
+  nesse caso. Use, de preferência, uma API key de exchange
+  <strong>somente leitura</strong> e restrita por IP.
 </div>
 
 <div class="grid">
@@ -150,6 +153,8 @@
     <h2>Contexto</h2>
     <label for="user-id">user_id</label>
     <input id="user-id" placeholder="ex: meu-teste" />
+    <label for="forge-api-key">Chave da API (Authorization), se o servidor exigir</label>
+    <input id="forge-api-key" type="password" autocomplete="off" placeholder="deixe em branco se o servidor não tiver FORGE_API_KEY" />
 
     <h2 style="margin-top:20px">Nova conexão</h2>
     <form id="connection-form">
@@ -267,8 +272,22 @@ const userIdInput = $('user-id');
 userIdInput.value = localStorage.getItem('forge_user_id') || '';
 userIdInput.addEventListener('input', () => localStorage.setItem('forge_user_id', userIdInput.value));
 
+const forgeApiKeyInput = $('forge-api-key');
+forgeApiKeyInput.value = localStorage.getItem('forge_api_key') || '';
+forgeApiKeyInput.addEventListener('input', () => localStorage.setItem('forge_api_key', forgeApiKeyInput.value));
+
 function currentUserId() {
   return userIdInput.value.trim();
+}
+
+// Wraps fetch() to attach the Authorization header when a key is set in
+// the field above - the server only enforces it if it was started with
+// FORGE_API_KEY, but sending it unconditionally is harmless either way.
+async function apiFetch(url, options = {}) {
+  const key = forgeApiKeyInput.value.trim();
+  const headers = Object.assign({}, options.headers || {});
+  if (key) headers['Authorization'] = `Bearer ${key}`;
+  return fetch(url, Object.assign({}, options, { headers }));
 }
 
 function showResult(label, data) {
@@ -304,7 +323,7 @@ async function loadConnections() {
     empty.textContent = 'Informe um user_id para listar conexões.';
     return;
   }
-  const res = await fetch(`/accounts/connections?user_id=${encodeURIComponent(userId)}`);
+  const res = await apiFetch(`/accounts/connections?user_id=${encodeURIComponent(userId)}`);
   const connections = await res.json();
   body.innerHTML = '';
   empty.style.display = connections.length ? 'none' : 'block';
@@ -337,14 +356,14 @@ async function handleConnectionAction(connection, action) {
   const base = `/accounts/connections/${connection.connection_id}`;
   if (action === 'delete') {
     if (!confirm(`Excluir a conexão ${connection.exchange} (${connection.account_identifier})?`)) return;
-    const res = await fetch(`${base}?user_id=${encodeURIComponent(userId)}`, { method: 'DELETE' });
+    const res = await apiFetch(`${base}?user_id=${encodeURIComponent(userId)}`, { method: 'DELETE' });
     const data = await res.json();
     showResult(`DELETE ${base}`, data);
     loadConnections();
     return;
   }
   if (action === 'sync-trades') {
-    const res = await fetch(`${base}/sync-trades?user_id=${encodeURIComponent(userId)}`, { method: 'POST' });
+    const res = await apiFetch(`${base}/sync-trades?user_id=${encodeURIComponent(userId)}`, { method: 'POST' });
     const data = await res.json();
     showResult(`POST ${base}/sync-trades`, data);
     if (res.ok) {
@@ -354,7 +373,7 @@ async function handleConnectionAction(connection, action) {
     return;
   }
   const path = { balance: 'balance', positions: 'positions', orders: 'orders' }[action];
-  const res = await fetch(`${base}/${path}?user_id=${encodeURIComponent(userId)}`);
+  const res = await apiFetch(`${base}/${path}?user_id=${encodeURIComponent(userId)}`);
   const data = await res.json();
   showResult(`GET ${base}/${path}`, data);
   if (res.ok) loadConnections(); // last_sync changed
@@ -367,7 +386,7 @@ async function loadActiveStrategy() {
     box.textContent = 'Informe um user_id para ver a estratégia ativa.';
     return;
   }
-  const res = await fetch(`/strategies?user_id=${encodeURIComponent(userId)}`);
+  const res = await apiFetch(`/strategies?user_id=${encodeURIComponent(userId)}`);
   const strategies = await res.json();
   const active = strategies.find((s) => s.status === 'ACTIVE');
   if (!active) {
@@ -386,7 +405,7 @@ async function activateFinancexStrategy(source) {
     status.className = 'status-msg err';
     return;
   }
-  const res = await fetch('/strategies', {
+  const res = await apiFetch('/strategies', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ user_id: userId, source }),
@@ -420,7 +439,7 @@ $('own-strategy-form').addEventListener('submit', async (e) => {
     status.className = 'status-msg err';
     return;
   }
-  const res = await fetch('/strategies', {
+  const res = await apiFetch('/strategies', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -451,7 +470,7 @@ async function loadTrades() {
     empty.style.display = 'block';
     return;
   }
-  const res = await fetch(`/trades?user_id=${encodeURIComponent(userId)}`);
+  const res = await apiFetch(`/trades?user_id=${encodeURIComponent(userId)}`);
   const trades = await res.json();
   body.innerHTML = '';
   empty.style.display = trades.length ? 'none' : 'block';
@@ -495,7 +514,7 @@ async function loadInsights() {
     renderInsights([]);
     return;
   }
-  const res = await fetch(`/insights?user_id=${encodeURIComponent(userId)}`);
+  const res = await apiFetch(`/insights?user_id=${encodeURIComponent(userId)}`);
   renderInsights(await res.json());
 }
 
@@ -509,7 +528,7 @@ $('generate-insights-btn').addEventListener('click', async () => {
   btn.disabled = true;
   btn.textContent = 'Gerando...';
   try {
-    const res = await fetch(`/insights/generate?user_id=${encodeURIComponent(userId)}`, { method: 'POST' });
+    const res = await apiFetch(`/insights/generate?user_id=${encodeURIComponent(userId)}`, { method: 'POST' });
     const data = await res.json();
     if (!res.ok) {
       alert(data.error || 'Erro ao gerar análise.');
@@ -549,7 +568,7 @@ $('connection-form').addEventListener('submit', async (e) => {
     return;
   }
 
-  const res = await fetch('/accounts/connections', {
+  const res = await apiFetch('/accounts/connections', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify(payload),

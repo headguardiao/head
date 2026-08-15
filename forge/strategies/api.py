@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 
 from aiohttp import web
 
@@ -23,11 +24,18 @@ def register_routes(app: web.Application, service: StrategyService) -> None:
         )
 
     async def create_strategy(request: web.Request) -> web.Response:
-        body = await request.json()
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"error": "request body must be valid JSON"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"error": "request body must be a JSON object"}, status=400)
         user_id = body.get("user_id")
         source = body.get("source")
         if not user_id or not source:
             return web.json_response({"error": "user_id and source are required"}, status=400)
+        if not isinstance(source, str):
+            return web.json_response({"error": "source must be a string"}, status=400)
 
         if source == StrategySource.OWN.value:
             description = (body.get("description") or "").strip()

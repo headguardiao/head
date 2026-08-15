@@ -12,7 +12,10 @@ automaticamente) ainda não estão implementadas.
 
 Pra integrar outro app com esse backend via HTTP (conexões, estratégia,
 trades, insights), veja [`API.md`](API.md) — lista todos os endpoints com
-exemplos de request/resposta.
+exemplos de request/resposta — e
+[`INTEGRACAO_APP_PRINCIPAL.md`](INTEGRACAO_APP_PRINCIPAL.md), documento
+de handoff com o fluxo recomendado e os pontos de atenção pra quem for
+implementar o lado consumidor.
 
 ## Arquitetura
 
@@ -81,14 +84,21 @@ Todo o pipeline de mercado usa **apenas dados públicos** — nenhuma API key
 `forge/accounts/` (conexões privadas) é diferente: guarda API key/secret
 do usuário cifrados com `Fernet` (chave em `FORGE_ENCRYPTION_KEY`, nunca
 no repositório — veja `.env.example`). Nenhuma chave/secret é devolvida
-por qualquer endpoint. **Este módulo ainda não tem autenticação real**
-— os endpoints `/accounts/*` identificam o "usuário" por um `user_id` de
-texto livre no request, sem verificação nenhuma (a etapa "01 Foundation"
-do blueprint, que cobre login/auth de verdade, foi propositalmente
-pulada). Isso é aceitável só para desenvolvimento local; **não exponha a
-porta 8080 publicamente enquanto isso não mudar** — a mesma recomendação
-de firewall abaixo vale em dobro aqui, já que agora há segredos reais em
-jogo, não só dados públicos de mercado.
+por qualquer endpoint.
+
+**Autenticação por Bearer token** (`forge/auth.py`): se `FORGE_API_KEY`
+estiver definida no ambiente, todo endpoint exceto `GET /health` e
+`GET /signal/{symbol}` exige o header `Authorization: Bearer
+<FORGE_API_KEY>` — sem isso, `401`. `user_id` continua sendo texto livre
+*dentro* desse espaço autenticado (não é uma identidade verificada, só
+particiona os dados). **Sem `FORGE_API_KEY` definida, não há
+autenticação nenhuma** — aceitável só para desenvolvimento local; **não
+exponha a porta 8080 publicamente sem definir essa chave primeiro** — a
+mesma recomendação de firewall abaixo vale em dobro aqui, já que agora
+há segredos reais em jogo, não só dados públicos de mercado. O painel de
+teste (`/dashboard`) tem um campo pra colar a chave manualmente — ela
+nunca é embutida na página servida, pra não vazar pra quem só carregar a
+URL.
 
 ## Rodar o dashboard rapidamente (Windows)
 

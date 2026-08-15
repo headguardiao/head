@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import dataclasses
+import json
 import logging
 
 from aiohttp import web
@@ -20,7 +21,12 @@ def _connection_json(conn) -> dict:
 
 def register_routes(app: web.Application, service: AccountsService) -> None:
     async def create_connection(request: web.Request) -> web.Response:
-        body = await request.json()
+        try:
+            body = await request.json()
+        except json.JSONDecodeError:
+            return web.json_response({"error": "request body must be valid JSON"}, status=400)
+        if not isinstance(body, dict):
+            return web.json_response({"error": "request body must be a JSON object"}, status=400)
         user_id = body.get("user_id")
         exchange = body.get("exchange")
         api_key = body.get("api_key")
@@ -29,16 +35,26 @@ def register_routes(app: web.Application, service: AccountsService) -> None:
             return web.json_response(
                 {"error": "user_id, exchange, api_key and api_secret are required"}, status=400
             )
+        if not all(isinstance(v, str) for v in (user_id, exchange, api_key, api_secret)):
+            return web.json_response(
+                {"error": "user_id, exchange, api_key and api_secret must be strings"}, status=400
+            )
         if exchange not in SUPPORTED_EXCHANGES:
             return web.json_response({"error": f"unsupported exchange: {exchange}"}, status=400)
+        passphrase = body.get("passphrase")
+        label = body.get("label")
+        if (passphrase is not None and not isinstance(passphrase, str)) or (
+            label is not None and not isinstance(label, str)
+        ):
+            return web.json_response({"error": "passphrase and label must be strings"}, status=400)
         try:
             connection = await service.create_connection(
                 user_id=user_id,
                 exchange=exchange,
                 api_key=api_key,
                 api_secret=api_secret,
-                passphrase=body.get("passphrase"),
-                label=body.get("label"),
+                passphrase=passphrase,
+                label=label,
             )
         except RuntimeError as exc:
             # Validation call to the exchange failed for a reason other

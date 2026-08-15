@@ -7,7 +7,7 @@ import sys
 
 from aiohttp import web
 
-from config.settings import DB_PATH, HTTP_HOST, HTTP_PORT, MIN_EXCHANGES_FOR_FULL_CONFIDENCE, SYMBOLS
+from config.settings import API_KEY, DB_PATH, HTTP_HOST, HTTP_PORT, MIN_EXCHANGES_FOR_FULL_CONFIDENCE, SYMBOLS
 from forge.accounts.api import register_routes as register_accounts_routes
 from forge.accounts.db import ConnectionsRepo
 from forge.accounts.db import init_db as init_accounts_db
@@ -17,6 +17,7 @@ from forge.adapters.binance import BinanceAdapter
 from forge.adapters.bitget import BitgetAdapter
 from forge.adapters.bybit import BybitAdapter
 from forge.adapters.okx import OKXAdapter
+from forge.auth import build_auth_middleware
 from forge.engine.score_engine import SymbolMarketState
 from forge.insights.api import register_routes as register_insights_routes
 from forge.insights.db import InsightsRepo
@@ -103,7 +104,7 @@ async def _start_http_server(
     async def dashboard(_request: web.Request) -> web.Response:
         return web.FileResponse(STATIC_DIR / "dashboard.html")
 
-    web_app = web.Application()
+    web_app = web.Application(middlewares=[build_auth_middleware(API_KEY)])
     web_app.router.add_get("/signal/{symbol}", get_signal)
     web_app.router.add_get("/health", health)
     web_app.router.add_get("/dashboard", dashboard)

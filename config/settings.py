@@ -14,3 +14,9 @@ MIN_EXCHANGES_FOR_FULL_CONFIDENCE = 4
 # from the environment where it's used, not exposed here, so it never
 # ends up printed alongside the rest of these settings.
 DB_PATH = os.getenv("FORGE_DB_PATH", "forge_accounts.db")
+
+# Bearer token required on every endpoint except /health and /signal/*
+# (see forge/auth.py). None disables auth entirely - only acceptable
+# for local-only use, never once this is reachable beyond localhost/a
+# trusted network.
+API_KEY = os.getenv("FORGE_API_KEY")
