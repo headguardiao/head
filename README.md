@@ -151,7 +151,48 @@ pytest
    chegando das 4 exchanges.
 
 Se for expor a porta 8080 publicamente, restrinja por firewall
-(`ufw allow from <seu-ip> to any port 8080`) — a API não tem autenticação.
+(`ufw allow from <seu-ip> to any port 8080`) **e defina `FORGE_API_KEY`**
+— sem essa variável, a API não tem autenticação nenhuma (ver seção
+"Segurança").
+
+## Deploy no Render
+
+O repositório já tem um `render.yaml` (Blueprint) pronto — o Render lê
+esse arquivo automaticamente ao conectar o repo.
+
+**Antes de começar**, duas decisões que o `render.yaml` já assume:
+- **Plano pago (Starter ou acima), nunca o free tier** — o free hiberna
+  depois de ~15min sem tráfego HTTP, o que derrubaria as conexões
+  WebSocket contínuas com as 4 exchanges (o coração do heatmap).
+- **Persistent Disk** — sem isso, o SQLite (`forge_accounts.db`,
+  conexões/estratégias/trades/insights) some a cada deploy. Já vem
+  configurado no `render.yaml` (1GB em `/var/data`, ajuste o tamanho se
+  precisar).
+
+Passos:
+1. No dashboard do Render: **New → Blueprint**, conecte este repositório
+   Git. Ele detecta o `render.yaml` sozinho.
+2. Antes do primeiro deploy, preencha manualmente no dashboard (o
+   `render.yaml` deixa essas duas como `sync: false` de propósito, pra
+   nunca ficarem no código):
+   - `FORGE_ENCRYPTION_KEY` — gere uma nova, não reaproveite a local:
+     `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+   - `FORGE_API_KEY` — gere uma nova também:
+     `python -c "import secrets; print(secrets.token_urlsafe(32))"`
+3. Deploy. O Render entrega HTTPS automaticamente — não precisa de
+   proxy/certificado próprio.
+4. `curl https://<seu-app>.onrender.com/health` pra confirmar, e teste
+   `POST /accounts/connections` com o header `Authorization: Bearer
+   <FORGE_API_KEY>` que você definiu no passo 2.
+
+**Chaves novas = banco vazio.** Como o Persistent Disk do Render é um
+disco físico diferente do arquivo local, a conexão OKX que você já tem
+localmente não aparece automaticamente lá — reconecte pelo dashboard
+(`/dashboard`) ou pela API depois do deploy. Se preferir migrar os dados
+existentes em vez de recomeçar, use o Shell do Render (dashboard → seu
+serviço → Shell) pra copiar o `forge_accounts.db` local pro disco
+montado — nesse caso reaproveite a mesma `FORGE_ENCRYPTION_KEY` local,
+senão os segredos cifrados ficam ilegíveis.
 
 ## Observações técnicas (herdadas do PDF, seção 12)
 

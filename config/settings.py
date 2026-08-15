@@ -3,7 +3,9 @@ import os
 SYMBOLS = ["BTCUSDT", "ETHUSDT"]
 
 HTTP_HOST = "0.0.0.0"
-HTTP_PORT = 8080
+# Render (and most PaaS platforms) assign the port dynamically via $PORT
+# and expect the app to bind to it - 8080 is only the local-dev default.
+HTTP_PORT = int(os.getenv("PORT", 8080))
 
 # Minimum number of core exchanges that must be connected for the
 # cross-exchange confirmation component to hit 100% confidence.
