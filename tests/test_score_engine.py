@@ -5,7 +5,7 @@ from forge.models import FundingRate, OpenInterest, OrderBookSnapshot, PriceLeve
 
 
 def test_score_is_bounded_and_confidence_reflects_exchange_count():
-    state = SymbolMarketState("BTCUSDT", min_exchanges_for_full_confidence=4)
+    state = SymbolMarketState("BTCUSDT", min_exchanges_for_full_confidence=3)
 
     state.on_orderbook(OrderBookSnapshot(
         exchange="binance", symbol="BTCUSDT", timestamp=time.time(),
@@ -26,11 +26,23 @@ def test_score_is_bounded_and_confidence_reflects_exchange_count():
 
     assert 0 <= breakdown.liquidity_score <= 100
     assert breakdown.bias in {"BULLISH", "BEARISH", "NEUTRAL"}
-    assert breakdown.confidence == 25.0  # 1 of 4 expected exchanges connected
+    assert breakdown.confidence == 33.3  # 1 of 3 expected exchanges connected
 
 
 def test_more_connected_exchanges_raise_confidence():
-    state = SymbolMarketState("BTCUSDT", min_exchanges_for_full_confidence=4)
+    state = SymbolMarketState("BTCUSDT", min_exchanges_for_full_confidence=3)
+    for exchange in ("binance", "okx", "bybit"):
+        state.on_orderbook(OrderBookSnapshot(
+            exchange=exchange, symbol="BTCUSDT", timestamp=time.time(),
+            bids=[PriceLevel(100.0, 1.0)], asks=[PriceLevel(101.0, 1.0)],
+        ))
+    breakdown = state.compute()
+    assert breakdown.confidence == 100.0
+    assert len(breakdown.connected_exchanges) == 3
+
+
+def test_fourth_exchange_does_not_exceed_full_confidence():
+    state = SymbolMarketState("BTCUSDT", min_exchanges_for_full_confidence=3)
     for exchange in ("binance", "okx", "bybit", "bitget"):
         state.on_orderbook(OrderBookSnapshot(
             exchange=exchange, symbol="BTCUSDT", timestamp=time.time(),
