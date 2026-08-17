@@ -79,7 +79,11 @@ export function createServer({ marketStates, adapters, startedAt }) {
       res.status(404).json({ error: `unknown symbol ${symbol}` });
       return;
     }
-    res.json({ symbol, ...state.score() });
+    const score = state.score();
+    const signalFields = score.hasEnoughData
+      ? { signalReady: score.confidence >= env.signalMinConfidence, minConfidenceRequired: env.signalMinConfidence }
+      : {};
+    res.json({ symbol, ...score, ...signalFields });
   });
 
   app.use((_req, res) => {

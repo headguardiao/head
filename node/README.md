@@ -53,6 +53,7 @@ book, e as respostas de `/health` e `/api/market/:symbol`.
 | `ORDER_BOOK_DEPTH` | `50` | Níveis de bid/ask mantidos por símbolo/exchange |
 | `MAX_TRADES_PER_SYMBOL` | `2000` | Cap do buffer de trades recentes por símbolo |
 | `LOG_LEVEL` | `info` | `error` \| `warn` \| `info` \| `debug` |
+| `SIGNAL_MIN_CONFIDENCE` | `60` | Limiar de `confidence` usado no campo `signalReady` de `/api/score/:symbol` |
 
 Nenhuma API key é lida de env var — o pipeline inteiro usa apenas
 endpoints públicos.
@@ -67,7 +68,9 @@ endpoints públicos.
 - `GET /api/score/:symbol` — `{ hasEnoughData: false, reason }` se ainda
   não há order book para o símbolo, ou o `LIQUIDITY_SCORE` completo com
   `liquidityScore`, `bias`, `confidence`, `fundingRate`, `oiChangePct`,
-  `liquidationNotionalUsd` e o detalhamento por componente.
+  `liquidationNotionalUsd`, o detalhamento por componente e
+  `signalReady`/`minConfidenceRequired` (ver `SIGNAL_MIN_CONFIDENCE`
+  abaixo).
 - `GET /api/symbols` — lista de símbolos rastreados nesta instância.
 - `GET /api/diagnostics/binance` — estado de sincronização do order book
   por símbolo na Binance (útil pra depurar rate-limit sem acesso a logs).
@@ -75,9 +78,16 @@ endpoints públicos.
 O `LIQUIDITY_SCORE` segue os pesos da seção 7 do PDF de arquitetura:
 concentração de liquidez 25%, remoção de liquidez 15%, open interest 15%,
 liquidações 15%, imbalance do order book 10%, CVD 10%, funding rate 5%,
-confirmação entre exchanges 5% (mínimo de 4 conectadas pra confiança
-plena). A implementação espelha `forge/engine/score_engine.py` (o
-protótipo Python) componente a componente.
+confirmação entre exchanges 5% (mínimo de 3 das 4 exchanges conectadas
+pra confiança plena — ver `MIN_EXCHANGES_FOR_FULL_CONFIDENCE`). A
+implementação espelha `forge/engine/score_engine.py` (o protótipo
+Python) componente a componente.
+
+`signalReady` em `/api/score/:symbol` é `confidence >= SIGNAL_MIN_CONFIDENCE`
+(env var, default `60`) — um atalho pronto pra quem consome o endpoint
+não precisar hardcodar o próprio limiar; `minConfidenceRequired` devolve
+o valor usado, caso o consumidor prefira aplicar a própria lógica sobre
+o `confidence` bruto.
 
 ## Como adicionar uma exchange
 

@@ -17,4 +17,7 @@ export const env = {
   orderBookDepth: Number(process.env.ORDER_BOOK_DEPTH) || 50,
   maxTradesPerSymbol: Number(process.env.MAX_TRADES_PER_SYMBOL) || 2000,
   logLevel: process.env.LOG_LEVEL || 'info',
+  // Minimum `confidence` for /api/score to report signalReady=true.
+  // Mirrors config/settings.py SIGNAL_MIN_CONFIDENCE.
+  signalMinConfidence: Number(process.env.SIGNAL_MIN_CONFIDENCE) || 60,
 };

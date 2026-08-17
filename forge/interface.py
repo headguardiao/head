@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import asdict
 
+from config.settings import SIGNAL_MIN_CONFIDENCE
 from forge.engine.score_engine import SymbolMarketState
 
 
@@ -36,4 +37,6 @@ class Heatmap:
             "top_liquidity_walls": [asdict(w) for w in b.top_walls],
             "confidence": b.confidence,
             "connected_exchanges": b.connected_exchanges,
+            "signal_ready": b.confidence >= SIGNAL_MIN_CONFIDENCE,
+            "min_confidence_required": SIGNAL_MIN_CONFIDENCE,
         }
