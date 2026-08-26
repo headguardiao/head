@@ -32,14 +32,25 @@ Exchange WS/REST → Adapters (isolados) → Normalizer → LiquidityEngine
 - `forge/app.py`: liga tudo e expõe uma API HTTP (`GET /signal/{symbol}`)
   para que o bot (mesmo se não for Python — ex.: um EA em MQL5) consiga
   consumir o sinal via requisição HTTP simples.
+- `forge/engine/glassnode_client.py` + `forge/engine/glassnode_sentiment.py`:
+  bloco **add-only** de sentimento on-chain (Glassnode) — SOPR, MVRV,
+  NUPL, netflow/reserva de exchange e supply de stablecoins, viram um
+  `glassnode_score` (-100..+100) exposto como objeto irmão `glassnode`
+  dentro de `/signal/{symbol}`. Nunca participa do `liquidity_score`,
+  do `bias` nem da `confidence` de confirmação entre exchanges — ver
+  seção "Sentimento on-chain" abaixo.
 
 ## Segurança
 
-Todo o pipeline usa **apenas dados públicos de mercado** — nenhuma API key
+Todo o pipeline de mercado usa **apenas dados públicos** — nenhuma API key
 é necessária para order book, trades, OI, funding ou liquidações. Não há
 nenhuma chave de exchange neste repositório. Quando (e se) módulos de
 execução forem adicionados, as chaves privadas devem ficar em um secret
 manager separado deste módulo de análise, nunca no código.
+
+A única exceção é `GLASSNODE_API_KEY` (env var, opcional), usada só pelo
+bloco de sentimento on-chain descrito abaixo — sem ela o resto do serviço
+continua 100% funcional, só o bloco `glassnode` vem com `has_key: false`.
 
 ## Rodar localmente
 
@@ -57,6 +68,29 @@ Depois:
 ```bash
 curl http://localhost:8080/signal/BTCUSDT
 ```
+
+## Sentimento on-chain (Glassnode) — bloco add-only
+
+Opcional. Com `GLASSNODE_API_KEY` setada no ambiente, `/signal/{symbol}`
+passa a incluir um objeto irmão `glassnode`:
+
+```bash
+export GLASSNODE_API_KEY=sua_chave
+python -m forge.app
+curl http://localhost:8080/signal/BTCUSDT | jq .glassnode
+```
+
+8 componentes (SOPR, STH-SOPR, MVRV, STH-MVRV, NUPL, exchange netflow,
+variação 24h da reserva em exchange, supply de stablecoins), cada um
+normalizado -100..+100, agregados em `glassnode_score` /
+`glassnode_bias` (`RISK_ON`/`RISK_OFF`/`NEUTRAL`) / `glassnode_confidence`.
+Símbolos que não sejam BTCUSDT/ETHUSDT ancoram na camada BTC
+(`asset_used: "BTC"`, `asset_direct: false`) em vez de escanear o
+catálogo Glassnode em runtime. Sem chave, ou com chave inválida,
+`has_key` vem `false` e todos os componentes vêm `avail: false` — o
+endpoint continua respondendo 200 normalmente, nada mais no payload é
+afetado. O serviço Node (`node/`) expõe o mesmo bloco, no mesmo formato,
+em `GET /api/score/:symbol` — ver `node/README.md`.
 
 ## Testes
 
@@ -79,6 +113,13 @@ pytest
 
 Se for expor a porta 8080 publicamente, restrinja por firewall
 (`ufw allow from <seu-ip> to any port 8080`) — a API não tem autenticação.
+
+Pra habilitar o bloco de sentimento on-chain em produção, adicione a
+`GLASSNODE_API_KEY` ao serviço sem colocá-la no repositório — por
+exemplo `sudo systemctl edit forge-heatmap` e um drop-in com
+`Environment=GLASSNODE_API_KEY=sua_chave`, ou um `EnvironmentFile=`
+apontando pra um arquivo fora do repo com permissão restrita ao usuário
+`forge`.
 
 ## Observações técnicas (herdadas do PDF, seção 12)
 
