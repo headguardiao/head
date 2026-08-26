@@ -72,11 +72,19 @@ async def _start_http_server(heatmap: Heatmap) -> web.AppRunner:
         except KeyError:
             return web.json_response({"error": f"unknown symbol {symbol}"}, status=404)
 
+    async def get_sentiment(request: web.Request) -> web.Response:
+        # Unlike /signal, any symbol is accepted - Camada C sentiment
+        # is independent Binance-derivatives data, not gated by which
+        # symbols this instance tracks order books for.
+        symbol = request.match_info["symbol"].upper()
+        return web.json_response(await heatmap.get_sentiment(symbol))
+
     async def health(_request: web.Request) -> web.Response:
         return web.json_response({"status": "ok"})
 
     web_app = web.Application()
     web_app.router.add_get("/signal/{symbol}", get_signal)
+    web_app.router.add_get("/sentiment/{symbol}", get_sentiment)
     web_app.router.add_get("/health", health)
 
     runner = web.AppRunner(web_app)

@@ -39,6 +39,14 @@ Exchange WS/REST → Adapters (isolados) → Normalizer → LiquidityEngine
   dentro de `/signal/{symbol}`. Nunca participa do `liquidity_score`,
   do `bias` nem da `confidence` de confirmação entre exchanges — ver
   seção "Sentimento on-chain" abaixo.
+- `forge/engine/sentiment_client.py` + `forge/engine/sentiment_engine.py`:
+  bloco **add-only** de sentimento de derivativos (funding, basis,
+  long/short retail e whale, taker flow, OI vs preço, liquidações com
+  lado, Fear & Greed) — só dados públicos da Binance, sem chave. Vira
+  `sentiment_score` (-100..+100) em `GET /sentiment/{symbol}` e como
+  objeto irmão `sentiment` dentro de `/signal/{symbol}`. Mesma regra:
+  nunca participa do `liquidity_score` — ver seção "Sentimento de
+  derivativos" abaixo.
 
 ## Segurança
 
@@ -91,6 +99,41 @@ catálogo Glassnode em runtime. Sem chave, ou com chave inválida,
 endpoint continua respondendo 200 normalmente, nada mais no payload é
 afetado. O serviço Node (`node/`) expõe o mesmo bloco, no mesmo formato,
 em `GET /api/score/:symbol` — ver `node/README.md`.
+
+## Sentimento de derivativos — bloco add-only
+
+Sem chave nenhuma (só endpoints públicos da Binance + Fear & Greed):
+
+```bash
+curl http://localhost:8080/sentiment/BTCUSDT
+```
+
+9 componentes: `funding_z` (funding rate vs média/desvio das últimas 21
+taxas), `basis_bps` (prêmio do futuro sobre o índice), `retail_ls` e
+`whale_pos_ls` (razão long/short de conta e de posição), `taker_15m` e
+`taker_shift` (fluxo agressor 15m e sua mudança vs 1h), `oi_price_agree`
+(OI e preço andando juntos ou não), `liq_side` (mais notional
+liquidado no lado comprado ou vendido — reaproveita as liquidações já
+ingeridas pelo `SymbolMarketState`, com `side`, em vez de reconsultar
+outra fonte) e `fng` (Fear & Greed — só informativo, peso **zero** no
+agregado). Cada um normalizado -100..+100 e agregados (exceto `fng`) em
+`sentiment_score` / `sentiment_bias` (`RISK_ON`/`RISK_OFF`/`NEUTRAL`,
+limiar ±15) / `sentiment_confidence`. Toda chamada pra um alt também
+calcula um `btc_anchor: { score, bias }` — com nota se o alt e o BTC
+discordarem de sinal.
+
+`GET /sentiment/{symbol}` aceita **qualquer** símbolo (não precisa
+estar entre os `SYMBOLS` rastreados por este processo — só perde o
+`liq_side`, que depende de liquidações locais). O mesmo bloco também
+aparece como objeto irmão `sentiment` dentro de `/signal/{symbol}`.
+Fonte fora do ar = componente `avail: false`, nunca HTTP 500.
+
+`forge/engine/sentiment_engine.py` também exporta
+`evaluate_sentiment_gate(score, confidence, side)` — uma função pura
+(`LONG`/`SHORT` → `allow`/`block`/`reduce`) pra quem já sabe o lado da
+operação (o app de alertas) chamar; ela **não** é chamada
+automaticamente por `/sentiment` nem `/signal`, e com
+`FORGE_SENTIMENT_GATE` desligada (padrão) sempre devolve `allow`.
 
 ## Testes
 

@@ -64,6 +64,13 @@ class SymbolMarketState:
     def on_funding(self, funding: FundingRate) -> None:
         self._funding_by_exchange[funding.exchange] = funding.rate
 
+    # ---- read-only accessors for other add-only modules ------------
+    # (Camada C sentiment: liq_side reuses this instead of re-ingesting
+    # liquidations from a second source - "IMPORTE, não reimplemente.")
+    @property
+    def recent_liquidations(self) -> list[Liquidation]:
+        return list(self._liquidations)
+
     def on_liquidation(self, liq: Liquidation) -> None:
         self._liquidations.append(liq)
         self._trim_window(self._liquidations, self.LIQUIDATION_WINDOW_SECONDS, key=lambda l: l.timestamp)

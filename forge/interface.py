@@ -5,18 +5,27 @@ from dataclasses import asdict
 from config.settings import SIGNAL_MIN_CONFIDENCE
 from forge.engine.glassnode_sentiment import compute_glassnode_sentiment
 from forge.engine.score_engine import SymbolMarketState
+from forge.engine.sentiment_engine import compute_sentiment
 
 
 class Heatmap:
     """Public interface consumed by the trading bot (PDF section 8):
 
         await heatmap.get_signal("BTCUSDT")
+        await heatmap.get_sentiment("BTCUSDT")
 
-    Returns liquidity_score, bias, concentration above/below, orderbook
-    imbalance, OI change, funding, liquidation notional, top liquidity
-    walls, confidence and a sibling `glassnode` on-chain sentiment block
-    (add-only - see forge/engine/glassnode_sentiment.py; never feeds
-    back into liquidity_score/bias/confidence above).
+    get_signal() returns liquidity_score, bias, concentration
+    above/below, orderbook imbalance, OI change, funding, liquidation
+    notional, top liquidity walls, confidence, and two sibling add-only
+    blocks that never feed back into liquidity_score/bias/confidence:
+    `glassnode` (on-chain, see glassnode_sentiment.py) and `sentiment`
+    (derivatives, see sentiment_engine.py - Camada C of the briefing).
+
+    get_sentiment() is the standalone GET /sentiment/{symbol} - unlike
+    get_signal(), it works for any symbol (not just ones this instance
+    tracks order books for), since it's independent Binance-derivatives
+    data; liq_side just stays unavailable if the symbol has no local
+    state to reuse liquidations from.
     """
 
     def __init__(self, states: dict[str, SymbolMarketState]):
@@ -43,4 +52,8 @@ class Heatmap:
             "signal_ready": b.confidence >= SIGNAL_MIN_CONFIDENCE,
             "min_confidence_required": SIGNAL_MIN_CONFIDENCE,
             "glassnode": await compute_glassnode_sentiment(symbol),
+            "sentiment": await compute_sentiment(symbol, states=self._states),
         }
+
+    async def get_sentiment(self, symbol: str) -> dict:
+        return await compute_sentiment(symbol, states=self._states)
