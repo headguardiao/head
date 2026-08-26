@@ -3,23 +3,26 @@ from __future__ import annotations
 from dataclasses import asdict
 
 from config.settings import SIGNAL_MIN_CONFIDENCE
+from forge.engine.glassnode_sentiment import compute_glassnode_sentiment
 from forge.engine.score_engine import SymbolMarketState
 
 
 class Heatmap:
     """Public interface consumed by the trading bot (PDF section 8):
 
-        heatmap.get_signal("BTCUSDT")
+        await heatmap.get_signal("BTCUSDT")
 
     Returns liquidity_score, bias, concentration above/below, orderbook
     imbalance, OI change, funding, liquidation notional, top liquidity
-    walls and confidence.
+    walls, confidence and a sibling `glassnode` on-chain sentiment block
+    (add-only - see forge/engine/glassnode_sentiment.py; never feeds
+    back into liquidity_score/bias/confidence above).
     """
 
     def __init__(self, states: dict[str, SymbolMarketState]):
         self._states = states
 
-    def get_signal(self, symbol: str) -> dict:
+    async def get_signal(self, symbol: str) -> dict:
         state = self._states.get(symbol)
         if state is None:
             raise KeyError(f"symbol not tracked: {symbol}")
@@ -39,4 +42,5 @@ class Heatmap:
             "connected_exchanges": b.connected_exchanges,
             "signal_ready": b.confidence >= SIGNAL_MIN_CONFIDENCE,
             "min_confidence_required": SIGNAL_MIN_CONFIDENCE,
+            "glassnode": await compute_glassnode_sentiment(symbol),
         }

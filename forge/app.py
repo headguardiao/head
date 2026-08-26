@@ -68,7 +68,7 @@ async def _start_http_server(heatmap: Heatmap) -> web.AppRunner:
     async def get_signal(request: web.Request) -> web.Response:
         symbol = request.match_info["symbol"].upper()
         try:
-            return web.json_response(heatmap.get_signal(symbol))
+            return web.json_response(await heatmap.get_signal(symbol))
         except KeyError:
             return web.json_response({"error": f"unknown symbol {symbol}"}, status=404)
 
