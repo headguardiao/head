@@ -3,6 +3,7 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { logger } from '../config/logger.js';
 import { env } from '../config/env.js';
+import { computeGlassnodeSentiment, emptyGlassnodePayload } from '../engine/glassnodeSentiment.js';
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 
@@ -72,7 +73,7 @@ export function createServer({ marketStates, adapters, startedAt }) {
     res.json(state.snapshot());
   });
 
-  app.get('/api/score/:symbol', (req, res) => {
+  app.get('/api/score/:symbol', async (req, res) => {
     const symbol = req.params.symbol.toUpperCase();
     const state = marketStates.get(symbol);
     if (!state) {
@@ -83,7 +84,18 @@ export function createServer({ marketStates, adapters, startedAt }) {
     const signalFields = score.hasEnoughData
       ? { signalReady: score.confidence >= env.signalMinConfidence, minConfidenceRequired: env.signalMinConfidence }
       : {};
-    res.json({ symbol, ...score, ...signalFields });
+
+    let glassnode;
+    try {
+      glassnode = await computeGlassnodeSentiment(symbol);
+    } catch (err) {
+      // computeGlassnodeSentiment is designed to never throw; this is a
+      // last-resort guard so a Glassnode outage can never take /api/score down.
+      logger.error(`glassnode sentiment failed unexpectedly: ${err.stack || err.message}`);
+      glassnode = emptyGlassnodePayload(false, ['glassnode internal error']);
+    }
+
+    res.json({ symbol, ...score, ...signalFields, glassnode });
   });
 
   app.use((_req, res) => {

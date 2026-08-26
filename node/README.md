@@ -54,9 +54,12 @@ book, e as respostas de `/health` e `/api/market/:symbol`.
 | `MAX_TRADES_PER_SYMBOL` | `2000` | Cap do buffer de trades recentes por símbolo |
 | `LOG_LEVEL` | `info` | `error` \| `warn` \| `info` \| `debug` |
 | `SIGNAL_MIN_CONFIDENCE` | `60` | Limiar de `confidence` usado no campo `signalReady` de `/api/score/:symbol` |
+| `GLASSNODE_API_KEY` | vazio | Chave da API Glassnode pro bloco `glassnode` (sentimento on-chain) em `/api/score/:symbol`. Sem chave, o pipeline de mercado continua 100% funcional — só `glassnode.has_key` vem `false` |
 
-Nenhuma API key é lida de env var — o pipeline inteiro usa apenas
-endpoints públicos.
+Nenhuma API key de exchange é lida de env var — o pipeline de mercado
+(order book/trades/OI/funding/liquidações) inteiro usa apenas endpoints
+públicos. `GLASSNODE_API_KEY` é a única exceção, opcional, só pro bloco
+de sentimento on-chain descrito abaixo.
 
 ## Endpoints
 
@@ -70,7 +73,8 @@ endpoints públicos.
   `liquidityScore`, `bias`, `confidence`, `fundingRate`, `oiChangePct`,
   `liquidationNotionalUsd`, o detalhamento por componente e
   `signalReady`/`minConfidenceRequired` (ver `SIGNAL_MIN_CONFIDENCE`
-  abaixo).
+  abaixo) — sempre acompanhado do bloco irmão `glassnode` (sentimento
+  on-chain, ver seção abaixo), independente de `hasEnoughData`.
 - `GET /api/symbols` — lista de símbolos rastreados nesta instância.
 - `GET /api/diagnostics/binance` — estado de sincronização do order book
   por símbolo na Binance (útil pra depurar rate-limit sem acesso a logs).
@@ -82,6 +86,21 @@ confirmação entre exchanges 5% (mínimo de 3 das 4 exchanges conectadas
 pra confiança plena — ver `MIN_EXCHANGES_FOR_FULL_CONFIDENCE`). A
 implementação espelha `forge/engine/score_engine.py` (o protótipo
 Python) componente a componente.
+
+## Sentimento on-chain (Glassnode) — bloco add-only
+
+`src/engine/glassnodeSentiment.js` + `src/engine/glassnodeClient.js`
+calculam um `glassnode_score` (-100..+100) a partir de 8 métricas
+Glassnode (SOPR, STH-SOPR, MVRV, STH-MVRV, NUPL, exchange netflow,
+variação 24h da reserva em exchange e supply de stablecoins), ancoradas
+em BTC pra qualquer símbolo que não seja BTCUSDT/ETHUSDT direto. É
+puramente aditivo: não participa do `liquidityScore`, do `bias` de
+paredes, nem da `confidence` de confirmação entre exchanges — é só um
+objeto irmão `glassnode` dentro de `/api/score/:symbol`, no mesmo
+formato (chaves em snake_case) que o serviço Python devolve em
+`/signal/{symbol}`. Sem `GLASSNODE_API_KEY`, `glassnode.has_key` vem
+`false` e todos os componentes vêm `avail: false` — o resto do payload
+não é afetado.
 
 `signalReady` em `/api/score/:symbol` é `confidence >= SIGNAL_MIN_CONFIDENCE`
 (env var, default `60`) — um atalho pronto pra quem consome o endpoint
