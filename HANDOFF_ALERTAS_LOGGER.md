@@ -127,6 +127,19 @@ linguagem, replique a mesma lógica (é puramente aritmética, ~10 linhas)
 ou peça pra eu portar — já fiz isso pro Glassnode em Node
 (`node/src/engine/glassnodeSentiment.js`), é rápido.
 
+### Camada D (on-chain público) — atualização: já implementada
+
+Desde a versão anterior deste handoff, a Camada D foi implementada
+aqui no Forge (`forge/engine/onchain_client.py` +
+`forge/engine/onchain_engine.py`). Objeto irmão `onchain` dentro de
+`/signal/{symbol}` — mesmo formato `{ value, score, avail }` por
+componente que `glassnode` e `sentiment`, com `onchain_score`,
+`onchain_bias`, `onchain_confidence`, `peg_stressed` e `chain_used`.
+Também exporta `evaluate_onchain_gate(bias, peg_stressed, confidence,
+side)`, mesmo padrão de função pura não-automática, gated por
+`FORGE_ONCHAIN_GATE` (default off). A seção 2 abaixo ("O que falta")
+não precisa mais cobrir essa camada — já é só consumir.
+
 ### Clients HTTP prontos
 
 Já mandei nesta conversa `forge_client.js` / `forge_client.py` /
@@ -201,7 +214,7 @@ B/C/E) em cima disso.
 Adicionar colunas **nullable**, sem mudar a chave:
 ```
 sentiment_score, sentiment_bias, sentiment_confidence, sentiment_components, sentiment_snapshot
-onchain_score, onchain_bias, onchain_snapshot        -- só quando a Camada D existir
+onchain_score, onchain_bias, onchain_snapshot        -- Camada D já existe, ver seção 1
 glassnode_score, glassnode_bias, glassnode_snapshot
 video_rule_ok, messy, vol_break, max_pb, vol_entry
 pnl_pct                                              -- quando o trade fechar, se já souber
@@ -218,11 +231,9 @@ o veto contra o universo todo.
 
 ### Camada D — On-chain público (mempool.space + DefiLlama)
 
-Ainda não implementada em lugar nenhum (nem aqui, nem lá). Se quiser
-que eu implemente aqui no Forge (mesmo padrão add-only do Glassnode/
-sentimento), é só pedir — mas o objeto `onchain` resultante também
-precisa ser consumido pelo app principal do mesmo jeito que `glassnode`
-e `sentiment`.
+**Já implementada aqui no Forge** — ver a atualização na seção 1. O
+objeto `onchain` só precisa ser consumido pelo app principal do mesmo
+jeito que `glassnode` e `sentiment`.
 
 ---
 
@@ -236,7 +247,7 @@ HTTP + o resultado da Camada A local). Campos velhos do seu
 {
   status, motivo, signal,                 // já existem (book) — não mudar
   sentiment, sentiment_gate,               // allow | block | reduce
-  onchain, onchain_gate,                   // quando a Camada D existir
+  onchain, onchain_gate,                   // Camada D já existe, ver seção 1
   glassnode, glassnode_gate,               // idem, quando o gate do Glassnode for portado
   video_rule: { ok, vol_break, max_pb, vol_entry, messy }
 }
@@ -248,7 +259,7 @@ go = video_rule.ok
   && !messy
   && book_status permite o lado          // bias alinhado, não NEUTRAL, confidence >= 50
   && sentiment_gate != block             // se FORGE_SENTIMENT_GATE=on
-  && onchain_gate   != block             // se FORGE_ONCHAIN_GATE=on (Camada D)
+  && onchain_gate   != block             // se FORGE_ONCHAIN_GATE=on
   && glassnode_gate != block             // se GLASSNODE_GATE=on
 ```
 
@@ -283,7 +294,7 @@ confidence < 50 → não opera        // < ~1.5 de 3 exchanges conectadas
 1. ~~Logger~~ → **fazer agora**: colunas novas + gravar block também.
 2. **Regra do vídeo (Camada A)** no app de alertas — sozinha já muda o operacional.
 3. ~~`GET /sentiment/{symbol}` + bloco em `/signal`~~ → **já pronto**, é só consumir.
-4. Camada D (on-chain público) — pedir pra implementar aqui no Forge se for seguir essa ordem.
+4. ~~Camada D (on-chain público)~~ → **já pronto**, é só consumir.
 5. ~~Glassnode~~ → **já pronto** (versão simples; upgrade com perfis de peso calibrados ainda pendente, ver conversa anterior).
 6. `avaliarForgeDirecao` passa a devolver os três gates **sem** alterar `status` antigo, até ligar as flags.
 7. Cron 30m de snapshot pra todos os símbolos.

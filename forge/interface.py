@@ -4,6 +4,7 @@ from dataclasses import asdict
 
 from config.settings import SIGNAL_MIN_CONFIDENCE
 from forge.engine.glassnode_sentiment import compute_glassnode_sentiment
+from forge.engine.onchain_engine import compute_onchain
 from forge.engine.score_engine import SymbolMarketState
 from forge.engine.sentiment_engine import compute_sentiment
 
@@ -16,10 +17,12 @@ class Heatmap:
 
     get_signal() returns liquidity_score, bias, concentration
     above/below, orderbook imbalance, OI change, funding, liquidation
-    notional, top liquidity walls, confidence, and two sibling add-only
-    blocks that never feed back into liquidity_score/bias/confidence:
-    `glassnode` (on-chain, see glassnode_sentiment.py) and `sentiment`
-    (derivatives, see sentiment_engine.py - Camada C of the briefing).
+    notional, top liquidity walls, confidence, and three sibling
+    add-only blocks that never feed back into
+    liquidity_score/bias/confidence: `glassnode` (on-chain via
+    Glassnode, see glassnode_sentiment.py), `sentiment` (derivatives,
+    see sentiment_engine.py - Camada C) and `onchain` (public on-chain
+    via mempool.space/DefiLlama, see onchain_engine.py - Camada D).
 
     get_sentiment() is the standalone GET /sentiment/{symbol} - unlike
     get_signal(), it works for any symbol (not just ones this instance
@@ -53,6 +56,7 @@ class Heatmap:
             "min_confidence_required": SIGNAL_MIN_CONFIDENCE,
             "glassnode": await compute_glassnode_sentiment(symbol),
             "sentiment": await compute_sentiment(symbol, states=self._states),
+            "onchain": await compute_onchain(symbol),
         }
 
     async def get_sentiment(self, symbol: str) -> dict:

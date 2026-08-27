@@ -47,6 +47,13 @@ Exchange WS/REST → Adapters (isolados) → Normalizer → LiquidityEngine
   objeto irmão `sentiment` dentro de `/signal/{symbol}`. Mesma regra:
   nunca participa do `liquidity_score` — ver seção "Sentimento de
   derivativos" abaixo.
+- `forge/engine/onchain_client.py` + `forge/engine/onchain_engine.py`:
+  bloco **add-only** de on-chain público (mempool.space + DefiLlama) —
+  fee/mempool/hashrate do Bitcoin, TVL da chain do alt, supply
+  agregado de stablecoins e estresse de peg (USDT/USDC). Sem chave
+  nenhuma. Vira `onchain_score` (-100..+100) como objeto irmão
+  `onchain` dentro de `/signal/{symbol}`. Mesma regra: nunca participa
+  do `liquidity_score` — ver seção "On-chain público" abaixo.
 
 ## Segurança
 
@@ -134,6 +141,38 @@ Fonte fora do ar = componente `avail: false`, nunca HTTP 500.
 operação (o app de alertas) chamar; ela **não** é chamada
 automaticamente por `/sentiment` nem `/signal`, e com
 `FORGE_SENTIMENT_GATE` desligada (padrão) sempre devolve `allow`.
+
+## On-chain público — bloco add-only
+
+Sem chave nenhuma (mempool.space + DefiLlama):
+
+```bash
+curl http://localhost:8080/signal/BTCUSDT | jq .onchain
+```
+
+7 componentes: `btc_fee` e `btc_mempool` (congestionamento da rede
+Bitcoin — fee recomendada e tamanho do mempool), `btc_hashrate`
+(variação 3d), `chain_tvl_1d` (variação 24h do TVL da chain do alt —
+ETH, Arbitrum, Optimism, Solana, Sui, Avalanche, BSC; BTC e "meme
+coins" como DOGE/PEPE/BONK não têm chain própria de TVL, então esse
+componente e `eth_gas` ficam `avail: false` e só a camada global
+conta), `eth_gas` (gas price via RPC público, sem chave Etherscan),
+`stables_7d` (variação 7d do supply agregado de stablecoins) e
+`peg_stress` (desvio de USDT/USDC de US$ 1 — acima de 50 bps força
+`onchain_bias: RISK_OFF` e liga a nota `"stable peg stress"`,
+independente do agregado ponderado). Pesos fixos (perfil 30m,
+renormalizados entre os componentes disponíveis):
+`stables_7d 0.22, chain_tvl_1d 0.18, btc_fee 0.16, btc_mempool 0.14,
+peg_stress 0.14, eth_gas 0.10, btc_hashrate 0.06`.
+
+Sem mapeamento pra chain (BTC, meme coins) ou fonte fora do ar =
+componente `avail: false`, nunca HTTP 500. `forge/engine/onchain_engine.py`
+também exporta `evaluate_onchain_gate(bias, peg_stressed, confidence, side)`,
+mesmo padrão do gate de sentimento: função pura, não chamada
+automaticamente, com `FORGE_ONCHAIN_GATE` desligada (padrão) sempre
+`allow`. A única regra explícita do briefing (`peg stress → block
+LONG`) está implementada; o resto (`reduce` em `NEUTRAL`) segue o
+mesmo padrão do gate de sentimento por consistência.
 
 ## Testes
 
