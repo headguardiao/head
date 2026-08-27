@@ -145,12 +145,9 @@ pra leitura sem lookahead (só usa pontos com `t <= close_time`) — não é
 usado por `/signal` (que não tem conceito de "alerta"), existe pra
 quando o app de alertas passar o `closeTime` real do sinal.
 
-**Nota**: essa versão calibrada (perfis de peso, fórmulas com `notes`,
-gate assimétrico, `close_time`) só existe no serviço Python por
-enquanto. O serviço Node (`node/`) ainda expõe a versão mais simples
-(média simples, sem perfis, sem gate) em `GET /api/score/:symbol` — ver
-`node/README.md`. Avisar se quiser que eu porte o upgrade pra lá
-também.
+O serviço Node (`node/`) expõe a mesma versão calibrada — perfis de
+peso, fórmulas, gate assimétrico e `closeTime` — em
+`GET /api/score/:symbol`, mesmo formato. Ver `node/README.md`.
 
 ## Sentimento de derivativos — bloco add-only
 
@@ -187,6 +184,10 @@ operação (o app de alertas) chamar; ela **não** é chamada
 automaticamente por `/sentiment` nem `/signal`, e com
 `FORGE_SENTIMENT_GATE` desligada (padrão) sempre devolve `allow`.
 
+O serviço Node (`node/`) expõe o mesmo bloco em
+`GET /api/sentiment/:symbol` e como objeto irmão `sentiment` em
+`GET /api/score/:symbol` — ver `node/README.md`.
+
 ## On-chain público — bloco add-only
 
 Sem chave nenhuma (mempool.space + DefiLlama):
@@ -218,6 +219,9 @@ automaticamente, com `FORGE_ONCHAIN_GATE` desligada (padrão) sempre
 `allow`. A única regra explícita do briefing (`peg stress → block
 LONG`) está implementada; o resto (`reduce` em `NEUTRAL`) segue o
 mesmo padrão do gate de sentimento por consistência.
+
+O serviço Node (`node/`) expõe o mesmo bloco `onchain` em
+`GET /api/score/:symbol` — ver `node/README.md`.
 
 ## Testes
 

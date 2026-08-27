@@ -98,18 +98,42 @@ esteja rastreando o book (só perde `liq_side` nesse caso).
 |---|---|
 | `GLASSNODE_API_KEY` | liga o bloco `glassnode` (Camada E). Sem ela, `has_key:false`, sem quebrar nada. |
 | `SIGNAL_MIN_CONFIDENCE` | limiar de `signal_ready` no `/signal` (default 60) |
-| `FORGE_SENTIMENT_GATE` | **existe como função pura, não está ligada em nenhum endpoint** — ver seção 3 |
+| `FORGE_SENTIMENT_PROFILE` | perfil de peso do `glassnode`: `30m`\|`2h`\|`daily` (default `30m`) |
+| `GLASSNODE_GATE` | liga `evaluate_glassnode_gate(...)` a devolver `block`/`reduce` de verdade — ver seção 3 |
+| `FORGE_SENTIMENT_GATE` | idem, pro `evaluate_sentiment_gate(...)` da Camada C |
+| `FORGE_ONCHAIN_GATE` | idem, pro `evaluate_onchain_gate(...)` da Camada D |
 
-### Função pronta pra composição (Camada C → gate)
+**Atualização: agora existe tanto em Python quanto em Node**, payload
+idêntico nos dois (mesmas chaves, mesmo formato):
+- Python: `GET /signal/{symbol}` (porta 8080) / `GET /sentiment/{symbol}`
+- Node: `GET /api/score/:symbol` (porta 3000) / `GET /api/sentiment/:symbol`
 
-`forge/engine/sentiment_engine.py` exporta:
+Não importa qual dos dois serviços o app principal consome — o
+contrato é o mesmo.
+
+### Funções prontas pra composição (gates → app principal)
+
+Cada camada tem uma função pura, exportada mas **não chamada
+automaticamente** por nenhum endpoint (nenhuma delas sabe o lado
+LONG/SHORT sozinha):
 
 ```python
-def evaluate_sentiment_gate(sentiment_score: float, sentiment_confidence: float, side: str, enabled: bool | None = None) -> str:
-    # "allow" | "block" | "reduce"
+# forge/engine/glassnode_sentiment.py
+evaluate_glassnode_gate(components: dict, glassnode_score: float, glassnode_confidence: float, side: str, enabled: bool | None = None) -> str
+
+# forge/engine/sentiment_engine.py
+evaluate_sentiment_gate(sentiment_score: float, sentiment_confidence: float, side: str, enabled: bool | None = None) -> str
+
+# forge/engine/onchain_engine.py
+evaluate_onchain_gate(onchain_bias: str, peg_stressed: bool, confidence: float, side: str, enabled: bool | None = None) -> str
 ```
 
-Regras (já implementadas, testadas em `tests/test_sentiment_engine.py`):
+Equivalentes em Node: `evaluateGlassnodeGate`, `evaluateSentimentGate`,
+`evaluateOnchainGate` (mesmos arquivos `.js` correspondentes em
+`node/src/engine/`).
+
+Regras de `evaluate_sentiment_gate` (Camada C, testadas em
+`tests/test_sentiment_engine.py`):
 ```
 LONG  + RISK_OFF (score<=-15) + |score|>=25 → block
 SHORT + RISK_ON  (score>=15)  + |score|>=25 → block
@@ -117,28 +141,46 @@ NEUTRAL + confidence>=50 → reduce
 gate desligado (padrão) → sempre "allow"
 ```
 
-Essa função **não é chamada automaticamente** por `/sentiment` nem
-`/signal` — ela não tem de onde saber o lado (`LONG`/`SHORT`) da
-operação. É o app principal (você) que chama, já sabendo o lado.
+Regras de `evaluate_glassnode_gate` (Camada E, assimétricas — o
+backtest tolera short melhor que long):
+```
+LONG  block se glassnode_score <= -12
+LONG  block se (sopr>1.05 E sth_mvrv>1.2) OU mvrv>=2.4 OU netflow_score<=-50
+SHORT block se glassnode_score >= +28
+SHORT block se sth_sopr<0.97 E netflow_score>=+50
+NEUTRAL + confidence>=50 → reduce
+```
 
-Se o app principal for Python, pode importar essa função diretamente
-(mesmo processo ou via um pequeno wrapper HTTP). Se for outra
-linguagem, replique a mesma lógica (é puramente aritmética, ~10 linhas)
-ou peça pra eu portar — já fiz isso pro Glassnode em Node
-(`node/src/engine/glassnodeSentiment.js`), é rápido.
+Regras de `evaluate_onchain_gate` (Camada D):
+```
+peg_stressed=true + LONG → block
+NEUTRAL + confidence>=50 → reduce
+```
+
+É o app principal (você) que chama cada uma dessas, já sabendo o lado
+da operação — em Python (importando direto, mesmo processo ou via
+wrapper HTTP) ou replicando a mesma lógica aritmética (~10-20 linhas
+cada) se o app principal for outra linguagem que não tenha acesso
+direto ao Node/Python do Forge.
 
 ### Camada D (on-chain público) — atualização: já implementada
 
-Desde a versão anterior deste handoff, a Camada D foi implementada
-aqui no Forge (`forge/engine/onchain_client.py` +
-`forge/engine/onchain_engine.py`). Objeto irmão `onchain` dentro de
-`/signal/{symbol}` — mesmo formato `{ value, score, avail }` por
-componente que `glassnode` e `sentiment`, com `onchain_score`,
-`onchain_bias`, `onchain_confidence`, `peg_stressed` e `chain_used`.
-Também exporta `evaluate_onchain_gate(bias, peg_stressed, confidence,
-side)`, mesmo padrão de função pura não-automática, gated por
-`FORGE_ONCHAIN_GATE` (default off). A seção 2 abaixo ("O que falta")
-não precisa mais cobrir essa camada — já é só consumir.
+A Camada D foi implementada tanto no Python (`forge/engine/onchain_client.py`
++ `forge/engine/onchain_engine.py`) quanto no Node (`onchainClient.js` +
+`onchainEngine.js`). Objeto irmão `onchain` dentro de `/signal/{symbol}`
+(Python) / `/api/score/:symbol` (Node) — mesmo formato `{ value, score,
+avail }` por componente que `glassnode` e `sentiment`, com
+`onchain_score`, `onchain_bias`, `onchain_confidence`, `peg_stressed` e
+`chain_used`. A seção 2 abaixo ("O que falta") não precisa mais cobrir
+essa camada — já é só consumir.
+
+**A Camada E (Glassnode) também foi recalibrada** desde a versão
+anterior deste handoff — perfis de peso, fórmulas com a convenção
+"positivo = RISK_ON = gasto no prejuízo é contrarian" (não é a leitura
+ingênua), `notes` automáticas, gate assimétrico long/short, e
+`close_time`/`closeTime` opcional pra leitura sem lookahead. Ver a
+seção "Sentimento on-chain (Glassnode)" do `README.md` do repo do
+Forge pros detalhes completos antes de consumir esse bloco.
 
 ### Clients HTTP prontos
 
@@ -295,7 +337,7 @@ confidence < 50 → não opera        // < ~1.5 de 3 exchanges conectadas
 2. **Regra do vídeo (Camada A)** no app de alertas — sozinha já muda o operacional.
 3. ~~`GET /sentiment/{symbol}` + bloco em `/signal`~~ → **já pronto**, é só consumir.
 4. ~~Camada D (on-chain público)~~ → **já pronto**, é só consumir.
-5. ~~Glassnode~~ → **já pronto** (versão simples; upgrade com perfis de peso calibrados ainda pendente, ver conversa anterior).
+5. ~~Glassnode~~ → **já pronto e calibrado** (perfis de peso, gate assimétrico, `close_time`).
 6. `avaliarForgeDirecao` passa a devolver os três gates **sem** alterar `status` antigo, até ligar as flags.
 7. Cron 30m de snapshot pra todos os símbolos.
 8. Research walk-forward só depois de ≥8 semanas de log com PnL.

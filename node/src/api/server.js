@@ -4,6 +4,8 @@ import express from 'express';
 import { logger } from '../config/logger.js';
 import { env } from '../config/env.js';
 import { computeGlassnodeSentiment, emptyGlassnodePayload } from '../engine/glassnodeSentiment.js';
+import { computeSentiment } from '../engine/sentimentEngine.js';
+import { computeOnchain } from '../engine/onchainEngine.js';
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 
@@ -95,7 +97,36 @@ export function createServer({ marketStates, adapters, startedAt }) {
       glassnode = emptyGlassnodePayload(false, ['glassnode internal error']);
     }
 
-    res.json({ symbol, ...score, ...signalFields, glassnode });
+    let sentiment;
+    try {
+      sentiment = await computeSentiment(symbol, undefined, marketStates);
+    } catch (err) {
+      logger.error(`sentiment engine failed unexpectedly: ${err.stack || err.message}`);
+      sentiment = null;
+    }
+
+    let onchain;
+    try {
+      onchain = await computeOnchain(symbol);
+    } catch (err) {
+      logger.error(`onchain engine failed unexpectedly: ${err.stack || err.message}`);
+      onchain = null;
+    }
+
+    res.json({ symbol, ...score, ...signalFields, glassnode, sentiment, onchain });
+  });
+
+  app.get('/api/sentiment/:symbol', async (req, res) => {
+    // Unlike /api/score, any symbol is accepted - Camada C sentiment is
+    // independent Binance-derivatives data, not gated by which symbols
+    // this instance tracks order books for.
+    const symbol = req.params.symbol.toUpperCase();
+    try {
+      res.json(await computeSentiment(symbol, undefined, marketStates));
+    } catch (err) {
+      logger.error(`sentiment engine failed unexpectedly: ${err.stack || err.message}`);
+      res.status(500).json({ error: 'internal error' });
+    }
   });
 
   app.use((_req, res) => {

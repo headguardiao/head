@@ -50,7 +50,16 @@ export class MarketState {
 
   onLiquidation(event) {
     const now = Date.now();
-    this.liquidations.push({ notionalUsd: event.price * event.quantity, timestamp: event.timestamp });
+    // side kept (not just notionalUsd) so the add-only sentiment layer
+    // can compute liq_side by reusing this instead of re-ingesting
+    // liquidations from a second source.
+    this.liquidations.push({
+      notionalUsd: event.price * event.quantity,
+      side: event.side,
+      price: event.price,
+      quantity: event.quantity,
+      timestamp: event.timestamp,
+    });
     this._trimByAge(this.liquidations, LIQUIDATION_WINDOW_MS, 'timestamp', now);
     this.lastUpdatedAt = now;
   }
