@@ -1,0 +1,604 @@
+<!doctype html>
+<html lang="pt-br">
+<head>
+<meta charset="utf-8" />
+<title>FORGE — Painel de testes</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #171a21;
+    --border: #2a2e38;
+    --text: #e6e8ec;
+    --muted: #9098a8;
+    --accent: #4f8cff;
+    --ok: #35c979;
+    --bad: #ff5d5d;
+    --warn: #f5a623;
+  }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--text);
+    font: 14px/1.4 -apple-system, Segoe UI, Roboto, sans-serif;
+    padding: 24px;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  h2 { font-size: 14px; margin: 0 0 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; }
+  .banner {
+    background: #3a2a12;
+    border: 1px solid var(--warn);
+    color: #ffd48a;
+    padding: 10px 14px;
+    border-radius: 8px;
+    margin-bottom: 20px;
+    font-size: 13px;
+  }
+  .grid { display: grid; grid-template-columns: 380px 1fr; gap: 20px; align-items: start; }
+  @media (max-width: 900px) { .grid { grid-template-columns: 1fr; } }
+  .panel {
+    background: var(--panel);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 16px;
+  }
+  label { display: block; margin: 10px 0 4px; color: var(--muted); font-size: 12px; }
+  input, select {
+    width: 100%;
+    padding: 8px 10px;
+    background: #10131a;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 13px;
+  }
+  button {
+    cursor: pointer;
+    border: none;
+    border-radius: 6px;
+    padding: 8px 14px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .btn-primary { background: var(--accent); color: #fff; }
+  .btn-ghost { background: transparent; border: 1px solid var(--border); color: var(--text); }
+  .btn-danger { background: transparent; border: 1px solid var(--bad); color: var(--bad); }
+  .btn-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+  .row-actions button { padding: 4px 10px; font-size: 12px; }
+  form .submit { margin-top: 14px; width: 100%; }
+  table { width: 100%; border-collapse: collapse; }
+  th, td { text-align: left; padding: 8px; border-bottom: 1px solid var(--border); font-size: 13px; vertical-align: top; }
+  th { color: var(--muted); font-weight: 500; font-size: 11px; text-transform: uppercase; }
+  .badge { padding: 2px 8px; border-radius: 100px; font-size: 11px; font-weight: 700; }
+  .badge-ACTIVE { background: #123a26; color: var(--ok); }
+  .badge-INVALID { background: #3a1717; color: var(--bad); }
+  .badge-PENDING, .badge-DISABLED { background: #2a2e38; color: var(--muted); }
+  .badge-ARCHIVED { background: #2a2e38; color: var(--muted); }
+  .muted { color: var(--muted); }
+  textarea {
+    width: 100%;
+    padding: 8px 10px;
+    background: #10131a;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 13px;
+    font-family: inherit;
+    resize: vertical;
+    min-height: 70px;
+  }
+  .active-strategy {
+    background: #10131a;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 14px;
+    font-size: 13px;
+  }
+  .insight-card {
+    background: #10131a;
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 10px 12px;
+    margin-bottom: 10px;
+    font-size: 13px;
+  }
+  .insight-card.insufficient_data { border-color: var(--warn); }
+  .insight-category {
+    font-size: 10px;
+    text-transform: uppercase;
+    letter-spacing: .04em;
+    color: var(--accent);
+    font-weight: 700;
+  }
+  .insight-card.insufficient_data .insight-category { color: var(--warn); }
+  pre {
+    background: #10131a;
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    padding: 10px;
+    font-size: 12px;
+    overflow: auto;
+    max-height: 260px;
+    margin: 8px 0 0;
+  }
+  .empty { color: var(--muted); padding: 20px 0; text-align: center; }
+  .status-msg { margin-top: 10px; font-size: 13px; }
+  .status-msg.ok { color: var(--ok); }
+  .status-msg.err { color: var(--bad); }
+  .health-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+</style>
+</head>
+<body>
+
+<h1>FORGE — Painel de testes</h1>
+<p class="muted" style="margin-top:0">
+  <span id="health-dot" class="health-dot" style="background:#555"></span>
+  <span id="health-text">verificando servidor…</span>
+</p>
+
+<div class="banner">
+  ⚠️ Ferramenta de teste. O <code>user_id</code> abaixo é só um
+  identificador em texto livre — qualquer chamada autenticada pode ver/
+  gerenciar conexões de qualquer <code>user_id</code>. Se o servidor foi
+  iniciado com <code>FORGE_API_KEY</code> definida, preencha a chave
+  abaixo (senão toda chamada volta <code>401</code>); se não, o servidor
+  está sem autenticação nenhuma — não exponha essa porta publicamente
+  nesse caso. Use, de preferência, uma API key de exchange
+  <strong>somente leitura</strong> e restrita por IP.
+</div>
+
+<div class="grid">
+  <div class="panel">
+    <h2>Contexto</h2>
+    <label for="user-id">user_id</label>
+    <input id="user-id" placeholder="ex: meu-teste" />
+    <label for="forge-api-key">Chave da API (Authorization), se o servidor exigir</label>
+    <input id="forge-api-key" type="password" autocomplete="off" placeholder="deixe em branco se o servidor não tiver FORGE_API_KEY" />
+
+    <h2 style="margin-top:20px">Nova conexão</h2>
+    <form id="connection-form">
+      <label for="exchange">Exchange</label>
+      <select id="exchange">
+        <option value="binance">Binance</option>
+        <option value="bybit">Bybit</option>
+        <option value="bitget">Bitget</option>
+        <option value="okx">OKX</option>
+      </select>
+
+      <label for="label">Rótulo (opcional)</label>
+      <input id="label" placeholder="ex: conta principal" />
+
+      <label for="api-key">API key</label>
+      <input id="api-key" autocomplete="off" />
+
+      <label for="api-secret">API secret</label>
+      <input id="api-secret" type="password" autocomplete="off" />
+
+      <label for="passphrase">Passphrase (Bitget/OKX)</label>
+      <input id="passphrase" type="password" autocomplete="off" />
+
+      <button type="submit" class="btn-primary submit">Criar conexão</button>
+    </form>
+    <div id="create-status" class="status-msg"></div>
+  </div>
+
+  <div class="panel">
+    <div style="display:flex; justify-content:space-between; align-items:center">
+      <h2 style="margin:0">Minhas conexões</h2>
+      <button id="refresh-btn" class="btn-ghost">Atualizar</button>
+    </div>
+    <table id="connections-table">
+      <thead>
+        <tr>
+          <th>Exchange</th>
+          <th>Rótulo</th>
+          <th>Status</th>
+          <th>Última sync</th>
+          <th>Ações</th>
+        </tr>
+      </thead>
+      <tbody id="connections-body"></tbody>
+    </table>
+    <div id="connections-empty" class="empty" style="display:none">Nenhuma conexão para este user_id ainda.</div>
+    <pre id="result-panel" style="display:none"></pre>
+  </div>
+</div>
+
+<div class="grid" style="margin-top:20px">
+  <div class="panel">
+    <h2>Estratégia</h2>
+    <div id="active-strategy" class="active-strategy muted">Nenhuma estratégia ativa.</div>
+
+    <div class="btn-row">
+      <button id="select-financex-normal" class="btn-ghost">Ativar FinanceX Normal</button>
+      <button id="select-financex-elite" class="btn-ghost">Ativar FinanceX Elite</button>
+    </div>
+
+    <form id="own-strategy-form" style="margin-top:16px">
+      <label for="own-strategy-name">Nome (opcional)</label>
+      <input id="own-strategy-name" placeholder="ex: minha estratégia de pullback" />
+      <label for="own-strategy-description">Descrição livre</label>
+      <textarea id="own-strategy-description" placeholder="Escreva sua estratégia em texto livre..."></textarea>
+      <button type="submit" class="btn-primary submit">Criar e ativar</button>
+    </form>
+    <div id="strategy-status" class="status-msg"></div>
+    <p class="muted" style="font-size:12px; margin-top:10px">
+      Ativar uma estratégia arquiva a anterior automaticamente — só uma
+      fica ativa por vez. A IA ainda não estrutura a descrição livre em
+      regras mensuráveis (isso fica para uma próxima rodada).
+    </p>
+  </div>
+
+  <div class="panel">
+    <h2>Trades sincronizados</h2>
+    <table id="trades-table">
+      <thead>
+        <tr>
+          <th>Exchange</th>
+          <th>Símbolo</th>
+          <th>Lado</th>
+          <th>Qtd</th>
+          <th>Preço</th>
+          <th>PnL líquido</th>
+          <th>Quando</th>
+        </tr>
+      </thead>
+      <tbody id="trades-body"></tbody>
+    </table>
+    <div id="trades-empty" class="empty" style="display:none">Nenhum trade sincronizado ainda. Use "Sincronizar trades" numa conexão acima.</div>
+  </div>
+</div>
+
+<div class="panel" style="margin-top:20px">
+  <div style="display:flex; justify-content:space-between; align-items:center">
+    <h2 style="margin:0">Análise Comportamental</h2>
+    <button id="generate-insights-btn" class="btn-primary">Gerar análise agora</button>
+  </div>
+  <p class="muted" style="font-size:12px; margin-top:8px">
+    Calculado sob demanda a partir dos trades já sincronizados (sem jobs
+    automáticos ainda). Precisa de pelo menos 15 trades numa categoria
+    para gerar um insight de verdade — com poucos trades, o resultado vai
+    dizer claramente que os dados ainda são insuficientes, em vez de
+    inventar um padrão.
+  </p>
+  <div id="insights-list" style="margin-top:12px"></div>
+  <div id="insights-empty" class="empty" style="display:none">Nenhuma análise gerada ainda para este user_id.</div>
+</div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const userIdInput = $('user-id');
+userIdInput.value = localStorage.getItem('forge_user_id') || '';
+userIdInput.addEventListener('input', () => localStorage.setItem('forge_user_id', userIdInput.value));
+
+const forgeApiKeyInput = $('forge-api-key');
+forgeApiKeyInput.value = localStorage.getItem('forge_api_key') || '';
+forgeApiKeyInput.addEventListener('input', () => localStorage.setItem('forge_api_key', forgeApiKeyInput.value));
+
+function currentUserId() {
+  return userIdInput.value.trim();
+}
+
+// Wraps fetch() to attach the Authorization header when a key is set in
+// the field above - the server only enforces it if it was started with
+// FORGE_API_KEY, but sending it unconditionally is harmless either way.
+async function apiFetch(url, options = {}) {
+  const key = forgeApiKeyInput.value.trim();
+  const headers = Object.assign({}, options.headers || {});
+  if (key) headers['Authorization'] = `Bearer ${key}`;
+  return fetch(url, Object.assign({}, options, { headers }));
+}
+
+function showResult(label, data) {
+  const panel = $('result-panel');
+  panel.style.display = 'block';
+  panel.textContent = `${label}\n\n` + JSON.stringify(data, null, 2);
+}
+
+async function checkHealth() {
+  const dot = $('health-dot');
+  const text = $('health-text');
+  try {
+    const res = await fetch('/health');
+    if (res.ok) {
+      dot.style.background = 'var(--ok)';
+      text.textContent = 'servidor online';
+      return;
+    }
+    throw new Error('unhealthy');
+  } catch {
+    dot.style.background = 'var(--bad)';
+    text.textContent = 'servidor não respondeu (rode: python -m forge.app)';
+  }
+}
+
+async function loadConnections() {
+  const userId = currentUserId();
+  const body = $('connections-body');
+  const empty = $('connections-empty');
+  if (!userId) {
+    body.innerHTML = '';
+    empty.style.display = 'block';
+    empty.textContent = 'Informe um user_id para listar conexões.';
+    return;
+  }
+  const res = await apiFetch(`/accounts/connections?user_id=${encodeURIComponent(userId)}`);
+  const connections = await res.json();
+  body.innerHTML = '';
+  empty.style.display = connections.length ? 'none' : 'block';
+  empty.textContent = 'Nenhuma conexão para este user_id ainda.';
+  for (const c of connections) {
+    const tr = document.createElement('tr');
+    const lastSync = c.last_sync ? new Date(c.last_sync * 1000).toLocaleString() : '—';
+    tr.innerHTML = `
+      <td>${c.exchange}</td>
+      <td>${c.account_identifier}</td>
+      <td><span class="badge badge-${c.status}">${c.status}</span></td>
+      <td class="muted">${lastSync}</td>
+      <td class="row-actions">
+        <button class="btn-ghost" data-action="balance">Saldo</button>
+        <button class="btn-ghost" data-action="positions">Posições</button>
+        <button class="btn-ghost" data-action="orders">Ordens</button>
+        <button class="btn-ghost" data-action="sync-trades">Sincronizar trades</button>
+        <button class="btn-danger" data-action="delete">Excluir</button>
+      </td>
+    `;
+    tr.querySelectorAll('button').forEach((btn) => {
+      btn.addEventListener('click', () => handleConnectionAction(c, btn.dataset.action));
+    });
+    body.appendChild(tr);
+  }
+}
+
+async function handleConnectionAction(connection, action) {
+  const userId = currentUserId();
+  const base = `/accounts/connections/${connection.connection_id}`;
+  if (action === 'delete') {
+    if (!confirm(`Excluir a conexão ${connection.exchange} (${connection.account_identifier})?`)) return;
+    const res = await apiFetch(`${base}?user_id=${encodeURIComponent(userId)}`, { method: 'DELETE' });
+    const data = await res.json();
+    showResult(`DELETE ${base}`, data);
+    loadConnections();
+    return;
+  }
+  if (action === 'sync-trades') {
+    const res = await apiFetch(`${base}/sync-trades?user_id=${encodeURIComponent(userId)}`, { method: 'POST' });
+    const data = await res.json();
+    showResult(`POST ${base}/sync-trades`, data);
+    if (res.ok) {
+      loadConnections();
+      loadTrades();
+    }
+    return;
+  }
+  const path = { balance: 'balance', positions: 'positions', orders: 'orders' }[action];
+  const res = await apiFetch(`${base}/${path}?user_id=${encodeURIComponent(userId)}`);
+  const data = await res.json();
+  showResult(`GET ${base}/${path}`, data);
+  if (res.ok) loadConnections(); // last_sync changed
+}
+
+async function loadActiveStrategy() {
+  const userId = currentUserId();
+  const box = $('active-strategy');
+  if (!userId) {
+    box.textContent = 'Informe um user_id para ver a estratégia ativa.';
+    return;
+  }
+  const res = await apiFetch(`/strategies?user_id=${encodeURIComponent(userId)}`);
+  const strategies = await res.json();
+  const active = strategies.find((s) => s.status === 'ACTIVE');
+  if (!active) {
+    box.textContent = 'Nenhuma estratégia ativa.';
+    return;
+  }
+  box.innerHTML = `<span class="badge badge-ACTIVE">ATIVA</span> <strong>${active.name}</strong>
+    <span class="muted">(${active.source})</span><br><span class="muted">${active.description}</span>`;
+}
+
+async function activateFinancexStrategy(source) {
+  const userId = currentUserId();
+  const status = $('strategy-status');
+  if (!userId) {
+    status.textContent = 'Informe um user_id no painel de contexto primeiro.';
+    status.className = 'status-msg err';
+    return;
+  }
+  const res = await apiFetch('/strategies', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ user_id: userId, source }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    status.textContent = data.error || 'Erro ao ativar estratégia.';
+    status.className = 'status-msg err';
+    return;
+  }
+  status.textContent = `Estratégia "${data.name}" ativada.`;
+  status.className = 'status-msg ok';
+  loadActiveStrategy();
+}
+
+$('select-financex-normal').addEventListener('click', () => activateFinancexStrategy('FINANCEX_NORMAL'));
+$('select-financex-elite').addEventListener('click', () => activateFinancexStrategy('FINANCEX_ELITE'));
+
+$('own-strategy-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const status = $('strategy-status');
+  const userId = currentUserId();
+  if (!userId) {
+    status.textContent = 'Informe um user_id no painel de contexto primeiro.';
+    status.className = 'status-msg err';
+    return;
+  }
+  const description = $('own-strategy-description').value.trim();
+  if (!description) {
+    status.textContent = 'Descreva sua estratégia antes de criar.';
+    status.className = 'status-msg err';
+    return;
+  }
+  const res = await apiFetch('/strategies', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({
+      user_id: userId,
+      source: 'OWN',
+      name: $('own-strategy-name').value.trim() || undefined,
+      description,
+    }),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    status.textContent = data.error || 'Erro ao criar estratégia.';
+    status.className = 'status-msg err';
+    return;
+  }
+  status.textContent = `Estratégia "${data.name}" criada e ativada.`;
+  status.className = 'status-msg ok';
+  $('own-strategy-form').reset();
+  loadActiveStrategy();
+});
+
+async function loadTrades() {
+  const userId = currentUserId();
+  const body = $('trades-body');
+  const empty = $('trades-empty');
+  if (!userId) {
+    body.innerHTML = '';
+    empty.style.display = 'block';
+    return;
+  }
+  const res = await apiFetch(`/trades?user_id=${encodeURIComponent(userId)}`);
+  const trades = await res.json();
+  body.innerHTML = '';
+  empty.style.display = trades.length ? 'none' : 'block';
+  for (const t of trades) {
+    const tr = document.createElement('tr');
+    const pnl = t.net_pnl === null || t.net_pnl === undefined ? '—' : t.net_pnl.toFixed(4);
+    tr.innerHTML = `
+      <td>${t.exchange}</td>
+      <td>${t.symbol}</td>
+      <td>${t.side}</td>
+      <td>${t.quantity}</td>
+      <td>${t.price}</td>
+      <td>${pnl}</td>
+      <td class="muted">${new Date(t.opened_at * 1000).toLocaleString()}</td>
+    `;
+    body.appendChild(tr);
+  }
+}
+
+function renderInsights(insights) {
+  const list = $('insights-list');
+  const empty = $('insights-empty');
+  list.innerHTML = '';
+  empty.style.display = insights.length ? 'none' : 'block';
+  for (const i of insights) {
+    const card = document.createElement('div');
+    card.className = `insight-card ${i.category}`;
+    const when = new Date(i.generated_at * 1000).toLocaleString();
+    card.innerHTML = `
+      <div class="insight-category">${i.category.replace(/_/g, ' ')}</div>
+      <div style="margin-top:4px">${i.text}</div>
+      <div class="muted" style="font-size:11px; margin-top:4px">amostra: ${i.sample_size} · gerado em ${when}</div>
+    `;
+    list.appendChild(card);
+  }
+}
+
+async function loadInsights() {
+  const userId = currentUserId();
+  if (!userId) {
+    renderInsights([]);
+    return;
+  }
+  const res = await apiFetch(`/insights?user_id=${encodeURIComponent(userId)}`);
+  renderInsights(await res.json());
+}
+
+$('generate-insights-btn').addEventListener('click', async () => {
+  const userId = currentUserId();
+  if (!userId) {
+    alert('Informe um user_id no painel de contexto primeiro.');
+    return;
+  }
+  const btn = $('generate-insights-btn');
+  btn.disabled = true;
+  btn.textContent = 'Gerando...';
+  try {
+    const res = await apiFetch(`/insights/generate?user_id=${encodeURIComponent(userId)}`, { method: 'POST' });
+    const data = await res.json();
+    if (!res.ok) {
+      alert(data.error || 'Erro ao gerar análise.');
+      return;
+    }
+    await loadInsights();
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Gerar análise agora';
+  }
+});
+
+$('connection-form').addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const status = $('create-status');
+  status.textContent = '';
+  status.className = 'status-msg';
+
+  const userId = currentUserId();
+  if (!userId) {
+    status.textContent = 'Informe um user_id no painel ao lado primeiro.';
+    status.classList.add('err');
+    return;
+  }
+
+  const payload = {
+    user_id: userId,
+    exchange: $('exchange').value,
+    api_key: $('api-key').value.trim(),
+    api_secret: $('api-secret').value.trim(),
+    passphrase: $('passphrase').value.trim() || undefined,
+    label: $('label').value.trim() || undefined,
+  };
+  if (!payload.api_key || !payload.api_secret) {
+    status.textContent = 'api_key e api_secret são obrigatórios.';
+    status.classList.add('err');
+    return;
+  }
+
+  const res = await apiFetch('/accounts/connections', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  const data = await res.json();
+  if (!res.ok) {
+    status.textContent = data.error || 'Erro ao criar conexão.';
+    status.classList.add('err');
+    return;
+  }
+  status.textContent = `Conexão criada com status ${data.status}.`;
+  status.classList.add(data.status === 'ACTIVE' ? 'ok' : 'err');
+  $('connection-form').reset();
+  $('exchange').value = payload.exchange;
+  loadConnections();
+});
+
+$('refresh-btn').addEventListener('click', loadConnections);
+userIdInput.addEventListener('change', () => {
+  loadConnections();
+  loadActiveStrategy();
+  loadTrades();
+  loadInsights();
+});
+
+checkHealth();
+loadConnections();
+loadActiveStrategy();
+loadTrades();
+loadInsights();
+</script>
+</body>
+</html>

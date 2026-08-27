@@ -1,0 +1,23 @@
+services:
+  - type: web
+    name: forge-heatmap
+    runtime: python
+    plan: starter # free tier hibernates after 15min idle, which would
+                  # kill the persistent WebSocket connections to the
+                  # exchanges - this app needs an always-on plan.
+    buildCommand: pip install -r requirements.txt
+    startCommand: python -m forge.app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.10
+      - key: FORGE_ENCRYPTION_KEY
+        sync: false # set manually in the Render dashboard - never commit real values
+      - key: FORGE_API_KEY
+        sync: false # set manually in the Render dashboard - never commit real values
+      - key: FORGE_DB_PATH
+        value: /var/data/forge_accounts.db
+    disk:
+      name: forge-data
+      mountPath: /var/data
+      sizeGB: 1 # SQLite file only - bump if it grows, resizing is a
+                # dashboard action, not a code change

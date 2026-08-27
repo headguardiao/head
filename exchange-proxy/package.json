@@ -1,0 +1,12 @@
+{
+  "name": "exchange-proxy",
+  "version": "1.0.0",
+  "description": "Proxy pra repassar chamadas de Bybit/Binance sem passar pelo bloqueio geográfico do Netlify/AWS.",
+  "main": "proxy-exchange.js",
+  "scripts": {
+    "start": "node proxy-exchange.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}

@@ -10,6 +10,13 @@ Fases 5 (Gate.io, KuCoin, MEXC, BingX, BitMart, HTX, CoinEx) e 6
 (backtest/validação antes de permitir que o score altere entradas/saídas
 automaticamente) ainda não estão implementadas.
 
+Pra integrar outro app com esse backend via HTTP (conexões, estratégia,
+trades, insights), veja [`API.md`](API.md) — lista todos os endpoints com
+exemplos de request/resposta — e
+[`INTEGRACAO_APP_PRINCIPAL.md`](INTEGRACAO_APP_PRINCIPAL.md), documento
+de handoff com o fluxo recomendado e os pontos de atenção pra quem for
+implementar o lado consumidor.
+
 ## Arquitetura
 
 ```
@@ -54,18 +61,83 @@ Exchange WS/REST → Adapters (isolados) → Normalizer → LiquidityEngine
   nenhuma. Vira `onchain_score` (-100..+100) como objeto irmão
   `onchain` dentro de `/signal/{symbol}`. Mesma regra: nunca participa
   do `liquidity_score` — ver seção "On-chain público" abaixo.
+- `forge/accounts/`: primeiro passo do roadmap do FinanceX FORGE
+  (`FinanceX_FORGE_Master_Technical_Blueprint.pdf`, etapa "02 Exchange
+  Integration") — conexões privadas por usuário (API key/secret) para
+  ler saldo, posições e ordens abertas em Binance/Bybit/Bitget/OKX. Um
+  `PrivateExchangeClient` por exchange (mesmo princípio de isolamento dos
+  adapters públicos), segredos cifrados em repouso (SQLite +
+  `cryptography.Fernet`) e nunca devolvidos nas respostas da API. Não
+  implementa nenhum endpoint de trading ou saque — apenas leitura.
+- `forge/strategies/`: seleção de estratégia por usuário — escrever a
+  própria (texto livre) ou ativar um template FinanceX (Normal/Elite).
+  Só uma estratégia fica `ACTIVE` por vez; ativar uma nova arquiva a
+  anterior. Sem Strategy DSL/backtest ainda (blueprint seção 15-18) — a
+  IA não estrutura a descrição livre em regras mensuráveis nesta versão.
+- `forge/ledger/`: Trading Ledger normalizado (blueprint seção 9-10).
+  `POST /accounts/connections/{id}/sync-trades` busca os fills/execuções
+  mais recentes da exchange (via os mesmos `PrivateExchangeClient` de
+  `forge/accounts/`, agora com `get_recent_trades()`), grava como `Trade`
+  (dedup por `(exchange, external_id)`, então repetir a sincronização é
+  seguro) e vincula cada trade novo à estratégia `ACTIVE` do usuário, se
+  houver. Sem histórico completo/paginação ainda — só a janela recente
+  que cada exchange devolve por padrão (3 dias na OKX, por exemplo).
+  `classification` fica sempre `UNKNOWN`: o Adherence Engine que avaliaria
+  aderência de verdade (blueprint seção 20) não existe nesta versão.
+- `forge/insights/`: motor de análise comportamental sob demanda
+  (`FORGE Modulo Comportamental e Estrategia Spec.pdf`, seção 2).
+  `POST /insights/generate?user_id=` calcula, na hora, a partir dos
+  trades já sincronizados: performance por origem de estratégia
+  (`strategy_trades.origin`) e consistência por horário do dia (UTC).
+  Exige no mínimo 15 trades por categoria — abaixo disso, devolve
+  explicitamente "dados insuficientes" em vez de inventar um padrão
+  (mesma regra da seção 2.5 do spec / seção 46 do blueprint). Frases são
+  geradas por template, não por IA — sem chave da Anthropic configurada
+  ainda. Sem jobs automáticos (diário/semanal/mensal) nem a aba de
+  Perguntas Sugestivas — ambos exigem infraestrutura que este app ainda
+  não tem (agendador, integração com Claude API) e ficam para uma
+  próxima rodada.
 
 ## Segurança
 
 Todo o pipeline de mercado usa **apenas dados públicos** — nenhuma API key
-é necessária para order book, trades, OI, funding ou liquidações. Não há
-nenhuma chave de exchange neste repositório. Quando (e se) módulos de
-execução forem adicionados, as chaves privadas devem ficar em um secret
-manager separado deste módulo de análise, nunca no código.
+é necessária para order book, trades, OI, funding ou liquidações. O
+pipeline de mercado (order book/trades/OI/funding/liquidações,
+`glassnode`/`sentiment`/`onchain`) nunca guarda chave de exchange
+nenhuma.
 
-A única exceção é `GLASSNODE_API_KEY` (env var, opcional), usada só pelo
-bloco de sentimento on-chain descrito abaixo — sem ela o resto do serviço
-continua 100% funcional, só o bloco `glassnode` vem com `has_key: false`.
+`forge/accounts/` (conexões privadas) é diferente: guarda API key/secret
+do usuário cifrados com `Fernet` (chave em `FORGE_ENCRYPTION_KEY`, nunca
+no repositório — veja `.env.example`). Nenhuma chave/secret é devolvida
+por qualquer endpoint.
+
+**Autenticação por Bearer token** (`forge/auth.py`): se `FORGE_API_KEY`
+estiver definida no ambiente, todo endpoint exceto `GET /health` e
+`GET /signal/{symbol}` exige o header `Authorization: Bearer
+<FORGE_API_KEY>` — sem isso, `401`. `user_id` continua sendo texto livre
+*dentro* desse espaço autenticado (não é uma identidade verificada, só
+particiona os dados). **Sem `FORGE_API_KEY` definida, não há
+autenticação nenhuma** — aceitável só para desenvolvimento local; **não
+exponha a porta 8080 publicamente sem definir essa chave primeiro** — a
+mesma recomendação de firewall abaixo vale em dobro aqui, já que agora
+há segredos reais em jogo, não só dados públicos de mercado. O painel de
+teste (`/dashboard`) tem um campo pra colar a chave manualmente — ela
+nunca é embutida na página servida, pra não vazar pra quem só carregar a
+URL.
+
+## Rodar o dashboard rapidamente (Windows)
+
+Depois de fazer o setup uma vez (seção abaixo), dê duplo-clique em
+`run_dashboard.bat` — ele sobe o servidor e abre
+`http://localhost:8080/dashboard` sozinho, carregando `FORGE_DB_PATH` e
+`FORGE_ENCRYPTION_KEY` do `.env`. Feche a janela do terminal que abre
+junto para parar o servidor. O `.env` guarda sua chave de criptografia
+real — nunca o compartilhe nem o commite (já está no `.gitignore`).
+
+`GLASSNODE_API_KEY` (env var, opcional) é mais uma exceção, só pro
+bloco de sentimento on-chain descrito abaixo — sem ela o resto do
+serviço continua 100% funcional, só o bloco `glassnode` vem com
+`has_key: false`.
 
 ## Rodar localmente
 
@@ -75,8 +147,13 @@ Requer Python 3.10+.
 python -m venv .venv
 source .venv/bin/activate   # Windows: .venv\Scripts\activate
 pip install -r requirements.txt
+cp .env.example .env    # e preencha FORGE_ENCRYPTION_KEY (veja o arquivo)
 python -m forge.app
 ```
+
+`FORGE_ENCRYPTION_KEY` só é obrigatória para usar `/accounts/*` (criar ou
+ler conexões de exchange privadas) — o heatmap público (`/signal/{symbol}`)
+funciona sem ela.
 
 Depois:
 
@@ -243,7 +320,48 @@ pytest
    chegando das 4 exchanges.
 
 Se for expor a porta 8080 publicamente, restrinja por firewall
-(`ufw allow from <seu-ip> to any port 8080`) — a API não tem autenticação.
+(`ufw allow from <seu-ip> to any port 8080`) **e defina `FORGE_API_KEY`**
+— sem essa variável, a API não tem autenticação nenhuma (ver seção
+"Segurança").
+
+## Deploy no Render
+
+O repositório já tem um `render.yaml` (Blueprint) pronto — o Render lê
+esse arquivo automaticamente ao conectar o repo.
+
+**Antes de começar**, duas decisões que o `render.yaml` já assume:
+- **Plano pago (Starter ou acima), nunca o free tier** — o free hiberna
+  depois de ~15min sem tráfego HTTP, o que derrubaria as conexões
+  WebSocket contínuas com as 4 exchanges (o coração do heatmap).
+- **Persistent Disk** — sem isso, o SQLite (`forge_accounts.db`,
+  conexões/estratégias/trades/insights) some a cada deploy. Já vem
+  configurado no `render.yaml` (1GB em `/var/data`, ajuste o tamanho se
+  precisar).
+
+Passos:
+1. No dashboard do Render: **New → Blueprint**, conecte este repositório
+   Git. Ele detecta o `render.yaml` sozinho.
+2. Antes do primeiro deploy, preencha manualmente no dashboard (o
+   `render.yaml` deixa essas duas como `sync: false` de propósito, pra
+   nunca ficarem no código):
+   - `FORGE_ENCRYPTION_KEY` — gere uma nova, não reaproveite a local:
+     `python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"`
+   - `FORGE_API_KEY` — gere uma nova também:
+     `python -c "import secrets; print(secrets.token_urlsafe(32))"`
+3. Deploy. O Render entrega HTTPS automaticamente — não precisa de
+   proxy/certificado próprio.
+4. `curl https://<seu-app>.onrender.com/health` pra confirmar, e teste
+   `POST /accounts/connections` com o header `Authorization: Bearer
+   <FORGE_API_KEY>` que você definiu no passo 2.
+
+**Chaves novas = banco vazio.** Como o Persistent Disk do Render é um
+disco físico diferente do arquivo local, a conexão OKX que você já tem
+localmente não aparece automaticamente lá — reconecte pelo dashboard
+(`/dashboard`) ou pela API depois do deploy. Se preferir migrar os dados
+existentes em vez de recomeçar, use o Shell do Render (dashboard → seu
+serviço → Shell) pra copiar o `forge_accounts.db` local pro disco
+montado — nesse caso reaproveite a mesma `FORGE_ENCRYPTION_KEY` local,
+senão os segredos cifrados ficam ilegíveis.
 
 Pra habilitar o bloco de sentimento on-chain em produção, adicione a
 `GLASSNODE_API_KEY` ao serviço sem colocá-la no repositório — por
