@@ -96,16 +96,61 @@ curl http://localhost:8080/signal/BTCUSDT | jq .glassnode
 ```
 
 8 componentes (SOPR, STH-SOPR, MVRV, STH-MVRV, NUPL, exchange netflow,
-variação 24h da reserva em exchange, supply de stablecoins), cada um
-normalizado -100..+100, agregados em `glassnode_score` /
-`glassnode_bias` (`RISK_ON`/`RISK_OFF`/`NEUTRAL`) / `glassnode_confidence`.
+variação 24h da reserva em exchange, variação 7d do supply de
+stablecoins), cada um normalizado -100..+100, agregados por **média
+ponderada** (não simples) em `glassnode_score` / `glassnode_bias`
+(`RISK_ON`/`RISK_OFF`/`NEUTRAL`, limiar ±15) / `glassnode_confidence`.
+
+**Convenção de sinal (calibrada, não é a leitura ingênua)**: positivo =
+RISK_ON = acumulação / reserva saindo da exchange / **gasto no
+prejuízo** (capitulação é tratada como sinal contrarian de acumulação,
+não como medo) — cuidado ao "consertar" os sinais das fórmulas em
+`glassnode_sentiment.py` sem reler essa convenção.
+
+Dois perfis de peso, selecionados por `FORGE_SENTIMENT_PROFILE=30m|2h|daily`
+(default `30m`, `2h`/`daily` usam a mesma tabela — "perfil de regime"):
+
+| Componente | 30m | 2h/daily |
+|---|---|---|
+| `exch_netflow` | 0.26 | 0.16 |
+| `sth_sopr` | 0.22 | 0.14 |
+| `exch_reserve_d1` | 0.14 | 0.10 |
+| `sth_mvrv` | 0.14 | 0.10 |
+| `sopr` | 0.10 | 0.14 |
+| `mvrv` | 0.06 | 0.18 |
+| `nupl` | 0.05 | 0.14 |
+| `stables` | 0.03 | 0.04 |
+
+Pesos renormalizados entre os componentes disponíveis. `notes` ganha
+frases automáticas em limiares específicos (`"sopr: profit taking"`,
+`"sopr: capitulation spend"`, `"mvrv: euphoria"`, `"mvrv: fear"`).
+
 Símbolos que não sejam BTCUSDT/ETHUSDT ancoram na camada BTC
 (`asset_used: "BTC"`, `asset_direct: false`) em vez de escanear o
 catálogo Glassnode em runtime. Sem chave, ou com chave inválida,
 `has_key` vem `false` e todos os componentes vêm `avail: false` — o
 endpoint continua respondendo 200 normalmente, nada mais no payload é
-afetado. O serviço Node (`node/`) expõe o mesmo bloco, no mesmo formato,
-em `GET /api/score/:symbol` — ver `node/README.md`.
+afetado.
+
+`forge/engine/glassnode_sentiment.py` também exporta
+`evaluate_glassnode_gate(components, glassnode_score, glassnode_confidence, side)`
+— função pura, não chamada automaticamente, gated por `GLASSNODE_GATE`
+(default off). Implementa as regras **assimétricas** do briefing: o
+backtest tolera short bem melhor que long, então `LONG` tem duas
+condições independentes de bloqueio (score ≤ -12, ou a combinação
+`sopr`/`sth_mvrv`/`mvrv`/`netflow` de distribuição/euforia) enquanto
+`SHORT` só tem uma (score ≥ +28, ou `sth_sopr` baixo + netflow alto).
+Também aceita um `close_time` opcional em `compute_glassnode_sentiment`
+pra leitura sem lookahead (só usa pontos com `t <= close_time`) — não é
+usado por `/signal` (que não tem conceito de "alerta"), existe pra
+quando o app de alertas passar o `closeTime` real do sinal.
+
+**Nota**: essa versão calibrada (perfis de peso, fórmulas com `notes`,
+gate assimétrico, `close_time`) só existe no serviço Python por
+enquanto. O serviço Node (`node/`) ainda expõe a versão mais simples
+(média simples, sem perfis, sem gate) em `GET /api/score/:symbol` — ver
+`node/README.md`. Avisar se quiser que eu porte o upgrade pra lá
+também.
 
 ## Sentimento de derivativos — bloco add-only
 
