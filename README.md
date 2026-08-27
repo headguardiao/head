@@ -39,6 +39,28 @@ Exchange WS/REST → Adapters (isolados) → Normalizer → LiquidityEngine
 - `forge/app.py`: liga tudo e expõe uma API HTTP (`GET /signal/{symbol}`)
   para que o bot (mesmo se não for Python — ex.: um EA em MQL5) consiga
   consumir o sinal via requisição HTTP simples.
+- `forge/engine/glassnode_client.py` + `forge/engine/glassnode_sentiment.py`:
+  bloco **add-only** de sentimento on-chain (Glassnode) — SOPR, MVRV,
+  NUPL, netflow/reserva de exchange e supply de stablecoins, viram um
+  `glassnode_score` (-100..+100) exposto como objeto irmão `glassnode`
+  dentro de `/signal/{symbol}`. Nunca participa do `liquidity_score`,
+  do `bias` nem da `confidence` de confirmação entre exchanges — ver
+  seção "Sentimento on-chain" abaixo.
+- `forge/engine/sentiment_client.py` + `forge/engine/sentiment_engine.py`:
+  bloco **add-only** de sentimento de derivativos (funding, basis,
+  long/short retail e whale, taker flow, OI vs preço, liquidações com
+  lado, Fear & Greed) — só dados públicos da Binance, sem chave. Vira
+  `sentiment_score` (-100..+100) em `GET /sentiment/{symbol}` e como
+  objeto irmão `sentiment` dentro de `/signal/{symbol}`. Mesma regra:
+  nunca participa do `liquidity_score` — ver seção "Sentimento de
+  derivativos" abaixo.
+- `forge/engine/onchain_client.py` + `forge/engine/onchain_engine.py`:
+  bloco **add-only** de on-chain público (mempool.space + DefiLlama) —
+  fee/mempool/hashrate do Bitcoin, TVL da chain do alt, supply
+  agregado de stablecoins e estresse de peg (USDT/USDC). Sem chave
+  nenhuma. Vira `onchain_score` (-100..+100) como objeto irmão
+  `onchain` dentro de `/signal/{symbol}`. Mesma regra: nunca participa
+  do `liquidity_score` — ver seção "On-chain público" abaixo.
 - `forge/accounts/`: primeiro passo do roadmap do FinanceX FORGE
   (`FinanceX_FORGE_Master_Technical_Blueprint.pdf`, etapa "02 Exchange
   Integration") — conexões privadas por usuário (API key/secret) para
@@ -79,7 +101,10 @@ Exchange WS/REST → Adapters (isolados) → Normalizer → LiquidityEngine
 ## Segurança
 
 Todo o pipeline de mercado usa **apenas dados públicos** — nenhuma API key
-é necessária para order book, trades, OI, funding ou liquidações.
+é necessária para order book, trades, OI, funding ou liquidações. O
+pipeline de mercado (order book/trades/OI/funding/liquidações,
+`glassnode`/`sentiment`/`onchain`) nunca guarda chave de exchange
+nenhuma.
 
 `forge/accounts/` (conexões privadas) é diferente: guarda API key/secret
 do usuário cifrados com `Fernet` (chave em `FORGE_ENCRYPTION_KEY`, nunca
@@ -109,6 +134,11 @@ Depois de fazer o setup uma vez (seção abaixo), dê duplo-clique em
 junto para parar o servidor. O `.env` guarda sua chave de criptografia
 real — nunca o compartilhe nem o commite (já está no `.gitignore`).
 
+`GLASSNODE_API_KEY` (env var, opcional) é mais uma exceção, só pro
+bloco de sentimento on-chain descrito abaixo — sem ela o resto do
+serviço continua 100% funcional, só o bloco `glassnode` vem com
+`has_key: false`.
+
 ## Rodar localmente
 
 Requer Python 3.10+.
@@ -130,6 +160,145 @@ Depois:
 ```bash
 curl http://localhost:8080/signal/BTCUSDT
 ```
+
+## Sentimento on-chain (Glassnode) — bloco add-only
+
+Opcional. Com `GLASSNODE_API_KEY` setada no ambiente, `/signal/{symbol}`
+passa a incluir um objeto irmão `glassnode`:
+
+```bash
+export GLASSNODE_API_KEY=sua_chave
+python -m forge.app
+curl http://localhost:8080/signal/BTCUSDT | jq .glassnode
+```
+
+8 componentes (SOPR, STH-SOPR, MVRV, STH-MVRV, NUPL, exchange netflow,
+variação 24h da reserva em exchange, variação 7d do supply de
+stablecoins), cada um normalizado -100..+100, agregados por **média
+ponderada** (não simples) em `glassnode_score` / `glassnode_bias`
+(`RISK_ON`/`RISK_OFF`/`NEUTRAL`, limiar ±15) / `glassnode_confidence`.
+
+**Convenção de sinal (calibrada, não é a leitura ingênua)**: positivo =
+RISK_ON = acumulação / reserva saindo da exchange / **gasto no
+prejuízo** (capitulação é tratada como sinal contrarian de acumulação,
+não como medo) — cuidado ao "consertar" os sinais das fórmulas em
+`glassnode_sentiment.py` sem reler essa convenção.
+
+Dois perfis de peso, selecionados por `FORGE_SENTIMENT_PROFILE=30m|2h|daily`
+(default `30m`, `2h`/`daily` usam a mesma tabela — "perfil de regime"):
+
+| Componente | 30m | 2h/daily |
+|---|---|---|
+| `exch_netflow` | 0.26 | 0.16 |
+| `sth_sopr` | 0.22 | 0.14 |
+| `exch_reserve_d1` | 0.14 | 0.10 |
+| `sth_mvrv` | 0.14 | 0.10 |
+| `sopr` | 0.10 | 0.14 |
+| `mvrv` | 0.06 | 0.18 |
+| `nupl` | 0.05 | 0.14 |
+| `stables` | 0.03 | 0.04 |
+
+Pesos renormalizados entre os componentes disponíveis. `notes` ganha
+frases automáticas em limiares específicos (`"sopr: profit taking"`,
+`"sopr: capitulation spend"`, `"mvrv: euphoria"`, `"mvrv: fear"`).
+
+Símbolos que não sejam BTCUSDT/ETHUSDT ancoram na camada BTC
+(`asset_used: "BTC"`, `asset_direct: false`) em vez de escanear o
+catálogo Glassnode em runtime. Sem chave, ou com chave inválida,
+`has_key` vem `false` e todos os componentes vêm `avail: false` — o
+endpoint continua respondendo 200 normalmente, nada mais no payload é
+afetado.
+
+`forge/engine/glassnode_sentiment.py` também exporta
+`evaluate_glassnode_gate(components, glassnode_score, glassnode_confidence, side)`
+— função pura, não chamada automaticamente, gated por `GLASSNODE_GATE`
+(default off). Implementa as regras **assimétricas** do briefing: o
+backtest tolera short bem melhor que long, então `LONG` tem duas
+condições independentes de bloqueio (score ≤ -12, ou a combinação
+`sopr`/`sth_mvrv`/`mvrv`/`netflow` de distribuição/euforia) enquanto
+`SHORT` só tem uma (score ≥ +28, ou `sth_sopr` baixo + netflow alto).
+Também aceita um `close_time` opcional em `compute_glassnode_sentiment`
+pra leitura sem lookahead (só usa pontos com `t <= close_time`) — não é
+usado por `/signal` (que não tem conceito de "alerta"), existe pra
+quando o app de alertas passar o `closeTime` real do sinal.
+
+O serviço Node (`node/`) expõe a mesma versão calibrada — perfis de
+peso, fórmulas, gate assimétrico e `closeTime` — em
+`GET /api/score/:symbol`, mesmo formato. Ver `node/README.md`.
+
+## Sentimento de derivativos — bloco add-only
+
+Sem chave nenhuma (só endpoints públicos da Binance + Fear & Greed):
+
+```bash
+curl http://localhost:8080/sentiment/BTCUSDT
+```
+
+9 componentes: `funding_z` (funding rate vs média/desvio das últimas 21
+taxas), `basis_bps` (prêmio do futuro sobre o índice), `retail_ls` e
+`whale_pos_ls` (razão long/short de conta e de posição), `taker_15m` e
+`taker_shift` (fluxo agressor 15m e sua mudança vs 1h), `oi_price_agree`
+(OI e preço andando juntos ou não), `liq_side` (mais notional
+liquidado no lado comprado ou vendido — reaproveita as liquidações já
+ingeridas pelo `SymbolMarketState`, com `side`, em vez de reconsultar
+outra fonte) e `fng` (Fear & Greed — só informativo, peso **zero** no
+agregado). Cada um normalizado -100..+100 e agregados (exceto `fng`) em
+`sentiment_score` / `sentiment_bias` (`RISK_ON`/`RISK_OFF`/`NEUTRAL`,
+limiar ±15) / `sentiment_confidence`. Toda chamada pra um alt também
+calcula um `btc_anchor: { score, bias }` — com nota se o alt e o BTC
+discordarem de sinal.
+
+`GET /sentiment/{symbol}` aceita **qualquer** símbolo (não precisa
+estar entre os `SYMBOLS` rastreados por este processo — só perde o
+`liq_side`, que depende de liquidações locais). O mesmo bloco também
+aparece como objeto irmão `sentiment` dentro de `/signal/{symbol}`.
+Fonte fora do ar = componente `avail: false`, nunca HTTP 500.
+
+`forge/engine/sentiment_engine.py` também exporta
+`evaluate_sentiment_gate(score, confidence, side)` — uma função pura
+(`LONG`/`SHORT` → `allow`/`block`/`reduce`) pra quem já sabe o lado da
+operação (o app de alertas) chamar; ela **não** é chamada
+automaticamente por `/sentiment` nem `/signal`, e com
+`FORGE_SENTIMENT_GATE` desligada (padrão) sempre devolve `allow`.
+
+O serviço Node (`node/`) expõe o mesmo bloco em
+`GET /api/sentiment/:symbol` e como objeto irmão `sentiment` em
+`GET /api/score/:symbol` — ver `node/README.md`.
+
+## On-chain público — bloco add-only
+
+Sem chave nenhuma (mempool.space + DefiLlama):
+
+```bash
+curl http://localhost:8080/signal/BTCUSDT | jq .onchain
+```
+
+7 componentes: `btc_fee` e `btc_mempool` (congestionamento da rede
+Bitcoin — fee recomendada e tamanho do mempool), `btc_hashrate`
+(variação 3d), `chain_tvl_1d` (variação 24h do TVL da chain do alt —
+ETH, Arbitrum, Optimism, Solana, Sui, Avalanche, BSC; BTC e "meme
+coins" como DOGE/PEPE/BONK não têm chain própria de TVL, então esse
+componente e `eth_gas` ficam `avail: false` e só a camada global
+conta), `eth_gas` (gas price via RPC público, sem chave Etherscan),
+`stables_7d` (variação 7d do supply agregado de stablecoins) e
+`peg_stress` (desvio de USDT/USDC de US$ 1 — acima de 50 bps força
+`onchain_bias: RISK_OFF` e liga a nota `"stable peg stress"`,
+independente do agregado ponderado). Pesos fixos (perfil 30m,
+renormalizados entre os componentes disponíveis):
+`stables_7d 0.22, chain_tvl_1d 0.18, btc_fee 0.16, btc_mempool 0.14,
+peg_stress 0.14, eth_gas 0.10, btc_hashrate 0.06`.
+
+Sem mapeamento pra chain (BTC, meme coins) ou fonte fora do ar =
+componente `avail: false`, nunca HTTP 500. `forge/engine/onchain_engine.py`
+também exporta `evaluate_onchain_gate(bias, peg_stressed, confidence, side)`,
+mesmo padrão do gate de sentimento: função pura, não chamada
+automaticamente, com `FORGE_ONCHAIN_GATE` desligada (padrão) sempre
+`allow`. A única regra explícita do briefing (`peg stress → block
+LONG`) está implementada; o resto (`reduce` em `NEUTRAL`) segue o
+mesmo padrão do gate de sentimento por consistência.
+
+O serviço Node (`node/`) expõe o mesmo bloco `onchain` em
+`GET /api/score/:symbol` — ver `node/README.md`.
 
 ## Testes
 
@@ -193,6 +362,13 @@ existentes em vez de recomeçar, use o Shell do Render (dashboard → seu
 serviço → Shell) pra copiar o `forge_accounts.db` local pro disco
 montado — nesse caso reaproveite a mesma `FORGE_ENCRYPTION_KEY` local,
 senão os segredos cifrados ficam ilegíveis.
+
+Pra habilitar o bloco de sentimento on-chain em produção, adicione a
+`GLASSNODE_API_KEY` ao serviço sem colocá-la no repositório — por
+exemplo `sudo systemctl edit forge-heatmap` e um drop-in com
+`Environment=GLASSNODE_API_KEY=sua_chave`, ou um `EnvironmentFile=`
+apontando pra um arquivo fora do repo com permissão restrita ao usuário
+`forge`.
 
 ## Observações técnicas (herdadas do PDF, seção 12)
 

@@ -4,7 +4,7 @@
 // cross-exchange confirmation 5%. Mirrors forge/engine/score_engine.py
 // (the Python prototype) so both implementations compute the same thing
 // from equivalent inputs.
-const MIN_EXCHANGES_FOR_FULL_CONFIDENCE = 4;
+const MIN_EXCHANGES_FOR_FULL_CONFIDENCE = 3;
 
 export function computeScore(state) {
   const { liquidityEngine, tradeBuffer } = state;

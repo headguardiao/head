@@ -305,7 +305,7 @@
       imbalanceScore: ['Imbalance (10%)', 'Compara compra vs venda nos 10 primeiros níveis do book agora. Positivo = mais pressão compradora perto do preço.'],
       cvdScore: ['CVD / fluxo de trades (10%)', 'Olha os trades já executados (não o book): comprador batendo no ask vs vendedor batendo no bid, numa janela recente.'],
       fundingScore: ['Funding (5%)', 'Taxa de funding média entre as exchanges. Positiva e alta = mercado muito otimista (longs pagando shorts).'],
-      confirmationScore: ['Confirmação entre exchanges (5%)', 'Quantas das 4 exchanges estão conectadas e contribuindo dados agora (conectadas / 4 × 100).'],
+      confirmationScore: ['Confirmação entre exchanges (5%)', 'Quantas das 4 exchanges estão conectadas e contribuindo dados agora (conectadas / 3 × 100, satura em 100 com 3 ou mais).'],
     };
     for (const [key, [label, desc]] of Object.entries(labels)) {
       const v = comps[key];

@@ -3,6 +3,9 @@ import { fileURLToPath } from 'node:url';
 import express from 'express';
 import { logger } from '../config/logger.js';
 import { env } from '../config/env.js';
+import { computeGlassnodeSentiment, emptyGlassnodePayload } from '../engine/glassnodeSentiment.js';
+import { computeSentiment } from '../engine/sentimentEngine.js';
+import { computeOnchain } from '../engine/onchainEngine.js';
 
 const publicDir = path.join(path.dirname(fileURLToPath(import.meta.url)), '..', 'public');
 
@@ -72,14 +75,58 @@ export function createServer({ marketStates, adapters, startedAt }) {
     res.json(state.snapshot());
   });
 
-  app.get('/api/score/:symbol', (req, res) => {
+  app.get('/api/score/:symbol', async (req, res) => {
     const symbol = req.params.symbol.toUpperCase();
     const state = marketStates.get(symbol);
     if (!state) {
       res.status(404).json({ error: `unknown symbol ${symbol}` });
       return;
     }
-    res.json({ symbol, ...state.score() });
+    const score = state.score();
+    const signalFields = score.hasEnoughData
+      ? { signalReady: score.confidence >= env.signalMinConfidence, minConfidenceRequired: env.signalMinConfidence }
+      : {};
+
+    let glassnode;
+    try {
+      glassnode = await computeGlassnodeSentiment(symbol);
+    } catch (err) {
+      // computeGlassnodeSentiment is designed to never throw; this is a
+      // last-resort guard so a Glassnode outage can never take /api/score down.
+      logger.error(`glassnode sentiment failed unexpectedly: ${err.stack || err.message}`);
+      glassnode = emptyGlassnodePayload(false, ['glassnode internal error']);
+    }
+
+    let sentiment;
+    try {
+      sentiment = await computeSentiment(symbol, undefined, marketStates);
+    } catch (err) {
+      logger.error(`sentiment engine failed unexpectedly: ${err.stack || err.message}`);
+      sentiment = null;
+    }
+
+    let onchain;
+    try {
+      onchain = await computeOnchain(symbol);
+    } catch (err) {
+      logger.error(`onchain engine failed unexpectedly: ${err.stack || err.message}`);
+      onchain = null;
+    }
+
+    res.json({ symbol, ...score, ...signalFields, glassnode, sentiment, onchain });
+  });
+
+  app.get('/api/sentiment/:symbol', async (req, res) => {
+    // Unlike /api/score, any symbol is accepted - Camada C sentiment is
+    // independent Binance-derivatives data, not gated by which symbols
+    // this instance tracks order books for.
+    const symbol = req.params.symbol.toUpperCase();
+    try {
+      res.json(await computeSentiment(symbol, undefined, marketStates));
+    } catch (err) {
+      logger.error(`sentiment engine failed unexpectedly: ${err.stack || err.message}`);
+      res.status(500).json({ error: 'internal error' });
+    }
   });
 
   app.use((_req, res) => {

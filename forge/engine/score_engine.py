@@ -35,7 +35,7 @@ class SymbolMarketState:
     CVD_WINDOW_SECONDS = 15 * 60
     HEATMAP_HISTORY_SECONDS = 60
 
-    def __init__(self, symbol: str, min_exchanges_for_full_confidence: int = 4):
+    def __init__(self, symbol: str, min_exchanges_for_full_confidence: int = 3):
         self.symbol = symbol
         self.liquidity_engine = LiquidityEngine(symbol)
         self.min_exchanges = min_exchanges_for_full_confidence
@@ -63,6 +63,13 @@ class SymbolMarketState:
 
     def on_funding(self, funding: FundingRate) -> None:
         self._funding_by_exchange[funding.exchange] = funding.rate
+
+    # ---- read-only accessors for other add-only modules ------------
+    # (Camada C sentiment: liq_side reuses this instead of re-ingesting
+    # liquidations from a second source - "IMPORTE, não reimplemente.")
+    @property
+    def recent_liquidations(self) -> list[Liquidation]:
+        return list(self._liquidations)
 
     def on_liquidation(self, liq: Liquidation) -> None:
         self._liquidations.append(liq)
